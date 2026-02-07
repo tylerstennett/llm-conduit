@@ -26,9 +26,30 @@ def test_vllm_top_k_allows_negative_one() -> None:
     assert config.top_k == -1
 
 
+def test_vllm_accepts_response_format_and_stream_options() -> None:
+    config = VLLMConfig(
+        model="m",
+        response_format={"type": "json_object"},
+        stream_options={"include_usage": True},
+    )
+    assert config.response_format == {"type": "json_object"}
+    assert config.stream_options == {"include_usage": True}
+
+
+def test_vllm_rejects_unsupported_best_of_field() -> None:
+    with pytest.raises(ValidationError):
+        VLLMConfig(model="m", best_of=2)  # type: ignore[call-arg]
+
+
 def test_ollama_top_k_requires_positive() -> None:
     with pytest.raises(ValidationError):
         OllamaConfig(model="m", top_k=0)
+
+
+def test_ollama_accepts_raw_and_suffix() -> None:
+    config = OllamaConfig(model="m", raw=True, suffix=" tail")
+    assert config.raw is True
+    assert config.suffix == " tail"
 
 
 def test_vllm_guided_aliases_are_mutually_exclusive() -> None:
@@ -65,7 +86,19 @@ def test_openrouter_api_key_required() -> None:
         OpenRouterConfig(model="model", api_key="")
 
 
+def test_openrouter_accepts_reasoning_transforms_and_include() -> None:
+    config = OpenRouterConfig(
+        model="model",
+        api_key="k",
+        reasoning={"effort": "high"},
+        transforms=["middle-out"],
+        include=["reasoning"],
+    )
+    assert config.reasoning == {"effort": "high"}
+    assert config.transforms == ["middle-out"]
+    assert config.include == ["reasoning"]
+
+
 def test_extra_fields_are_forbidden() -> None:
     with pytest.raises(ValidationError):
         VLLMConfig(model="m", unknown_field=123)  # type: ignore[call-arg]
-

@@ -52,6 +52,9 @@ class OpenRouterConfig(BaseLLMConfig):
     plugins: list[dict[str, Any]] | None = None
     user: str | None = None
     stream_options: dict[str, Any] | None = None
+    reasoning: dict[str, Any] | None = None
+    transforms: list[str] | None = None
+    include: list[str] | None = None
 
     app_name: str | None = None
     app_url: str | None = None

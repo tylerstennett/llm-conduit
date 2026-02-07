@@ -7,7 +7,7 @@ import httpx
 
 from conduit.config.base import BaseLLMConfig
 from conduit.config.vllm import VLLMConfig
-from conduit.exceptions import ResponseParseError, StreamError
+from conduit.exceptions import ConfigValidationError, ResponseParseError, StreamError
 from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
@@ -46,6 +46,7 @@ class VLLMProvider(BaseProvider):
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
             "max_completion_tokens": config.max_completion_tokens,
+            "response_format": config.response_format,
             "top_p": config.top_p,
             "stop": normalize_stop(config.stop),
             "seed": config.seed,
@@ -74,6 +75,13 @@ class VLLMProvider(BaseProvider):
             "chat_template": config.chat_template,
             "chat_template_kwargs": config.chat_template_kwargs,
         }
+
+        if config.stream_options is not None:
+            if not stream:
+                raise ConfigValidationError(
+                    "vLLM stream_options is only supported when stream=True"
+                )
+            body["stream_options"] = config.stream_options
 
         structured_outputs = config.merged_structured_outputs()
         if structured_outputs is not None:

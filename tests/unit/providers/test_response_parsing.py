@@ -144,6 +144,42 @@ async def test_ollama_parses_chat_response(sample_messages, sample_tools) -> Non
     await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_ollama_generate_mode_parses_response(sample_messages) -> None:
+    requested_path: str | None = None
+    payload = {
+        "model": "qwen3",
+        "response": "generated text",
+        "done": True,
+        "done_reason": "stop",
+        "prompt_eval_count": 4,
+        "eval_count": 3,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requested_path
+        requested_path = request.url.path
+        return httpx.Response(200, json=payload)
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    provider = OllamaProvider(OllamaConfig(model="qwen3", raw=True), http_client=client)
+
+    response = await provider.chat(
+        ChatRequest(messages=sample_messages),
+        effective_config=provider.config,
+    )
+
+    assert requested_path == "/api/generate"
+    assert response.content == "generated text"
+    assert response.finish_reason == "stop"
+    assert response.tool_calls is None
+    assert response.usage is not None
+    assert response.usage.total_tokens == 7
+
+    await client.aclose()
+
+
 def test_ollama_round_trip_tool_name_mapping(sample_tools) -> None:
     assistant_message = Message(
         role=Role.ASSISTANT,
