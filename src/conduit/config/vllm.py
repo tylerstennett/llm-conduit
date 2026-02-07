@@ -54,6 +54,8 @@ class VLLMConfig(BaseLLMConfig):
     logprobs: bool | None = None
     top_logprobs: int | None = Field(default=None, ge=-1)
     max_completion_tokens: int | None = Field(default=None, ge=1)
+    response_format: dict[str, Any] | None = None
+    stream_options: dict[str, Any] | None = None
 
     use_beam_search: bool = False
     top_k: int | None = Field(default=None, ge=-1)

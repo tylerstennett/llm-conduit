@@ -34,38 +34,17 @@ class OllamaProvider(BaseProvider):
         stream: bool,
     ) -> dict[str, Any]:
         config = cast(OllamaConfig, effective_config)
-
-        include_tools = False
-        if request.tools:
-            if request.tool_choice is None or request.tool_choice == "auto":
-                include_tools = True
-            elif request.tool_choice == "none":
-                include_tools = False
-            else:
-                raise ConfigValidationError(
-                    "Ollama only supports tool_choice values of auto or none"
-                )
-
-        id_to_name = build_tool_id_to_name_map(request.messages)
-        messages = to_ollama_messages(request.messages, id_to_name=id_to_name)
-
-        options = self._build_options(config)
-
-        body: dict[str, Any] = {
-            "model": config.model,
-            "messages": messages,
-            "stream": stream,
-            "options": options if options else None,
-            "format": config.format,
-            "keep_alive": config.keep_alive,
-            "think": config.think,
-            "logprobs": config.logprobs,
-            "top_logprobs": config.top_logprobs,
-        }
-        if include_tools:
-            body["tools"] = [tool.to_openai_tool() for tool in request.tools or []]
-
-        return drop_nones(body)
+        if self._use_generate_endpoint(config):
+            return self._build_generate_request_body(
+                request,
+                config=config,
+                stream=stream,
+            )
+        return self._build_chat_request_body(
+            request,
+            config=config,
+            stream=stream,
+        )
 
     async def chat(
         self,
@@ -73,16 +52,32 @@ class OllamaProvider(BaseProvider):
         *,
         effective_config: BaseLLMConfig,
     ) -> ChatResponse:
+        config = cast(OllamaConfig, effective_config)
         payload = self.build_request_body(
             request,
             effective_config=effective_config,
             stream=False,
         )
+        endpoint = "/api/generate" if self._use_generate_endpoint(config) else "/api/chat"
         raw = await self.post_json(
-            "/api/chat",
+            endpoint,
             payload,
             effective_config=effective_config,
         )
+        if endpoint == "/api/generate":
+            return ChatResponse(
+                content=raw.get("response") if isinstance(raw.get("response"), str) else None,
+                tool_calls=None,
+                finish_reason=(
+                    raw.get("done_reason")
+                    if isinstance(raw.get("done_reason"), str)
+                    else None
+                ),
+                usage=parse_ollama_usage(raw),
+                raw_response=raw,
+                model=raw.get("model") if isinstance(raw.get("model"), str) else None,
+                provider=self.provider_name,
+            )
 
         message = raw.get("message")
         if not isinstance(message, dict):
@@ -104,13 +99,57 @@ class OllamaProvider(BaseProvider):
         *,
         effective_config: BaseLLMConfig,
     ) -> AsyncIterator[ChatResponseChunk]:
+        config = cast(OllamaConfig, effective_config)
         payload = self.build_request_body(
             request,
             effective_config=effective_config,
             stream=True,
         )
         headers = self.default_headers(effective_config=effective_config)
-        url = self.make_url("/api/chat", effective_config=effective_config)
+        endpoint = "/api/generate" if self._use_generate_endpoint(config) else "/api/chat"
+        url = self.make_url(endpoint, effective_config=effective_config)
+        if endpoint == "/api/generate":
+            try:
+                async with self.http_client.stream(
+                    "POST",
+                    url,
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    if response.status_code >= 400:
+                        raise self.map_http_error(response)
+
+                    async for raw_chunk in iter_ndjson(response):
+                        content = raw_chunk.get("response")
+                        if not isinstance(content, str):
+                            content = None
+
+                        done = raw_chunk.get("done")
+                        finish_reason = (
+                            raw_chunk.get("done_reason")
+                            if done and isinstance(raw_chunk.get("done_reason"), str)
+                            else None
+                        )
+                        usage = parse_ollama_usage(raw_chunk) if done else None
+
+                        chunk = ChatResponseChunk(
+                            content=content,
+                            finish_reason=finish_reason,
+                            usage=usage,
+                            raw_chunk=raw_chunk,
+                        )
+
+                        if (
+                            chunk.content is None
+                            and chunk.finish_reason is None
+                            and chunk.usage is None
+                        ):
+                            continue
+                        yield chunk
+            except httpx.HTTPError as exc:
+                raise StreamError(f"Ollama streaming request failed: {exc}") from exc
+            return
+
         accumulator = ToolCallChunkAccumulator()
 
         try:
@@ -170,6 +209,77 @@ class OllamaProvider(BaseProvider):
                     yield chunk
         except httpx.HTTPError as exc:
             raise StreamError(f"Ollama streaming request failed: {exc}") from exc
+
+    @staticmethod
+    def _use_generate_endpoint(config: OllamaConfig) -> bool:
+        return config.raw is True or config.suffix is not None
+
+    def _build_chat_request_body(
+        self,
+        request: ChatRequest,
+        *,
+        config: OllamaConfig,
+        stream: bool,
+    ) -> dict[str, Any]:
+        include_tools = False
+        if request.tools:
+            if request.tool_choice is None or request.tool_choice == "auto":
+                include_tools = True
+            elif request.tool_choice == "none":
+                include_tools = False
+            else:
+                raise ConfigValidationError(
+                    "Ollama only supports tool_choice values of auto or none"
+                )
+
+        id_to_name = build_tool_id_to_name_map(request.messages)
+        messages = to_ollama_messages(request.messages, id_to_name=id_to_name)
+
+        options = self._build_options(config)
+
+        body: dict[str, Any] = {
+            "model": config.model,
+            "messages": messages,
+            "stream": stream,
+            "options": options if options else None,
+            "format": config.format,
+            "keep_alive": config.keep_alive,
+            "think": config.think,
+            "logprobs": config.logprobs,
+            "top_logprobs": config.top_logprobs,
+        }
+        if include_tools:
+            body["tools"] = [tool.to_openai_tool() for tool in request.tools or []]
+
+        return drop_nones(body)
+
+    def _build_generate_request_body(
+        self,
+        request: ChatRequest,
+        *,
+        config: OllamaConfig,
+        stream: bool,
+    ) -> dict[str, Any]:
+        if request.tools:
+            raise ConfigValidationError("Ollama /api/generate does not support tools")
+        if request.tool_choice is not None:
+            raise ConfigValidationError("Ollama /api/generate does not support tool_choice")
+
+        system_prompt, prompt = extract_generate_prompt(request.messages)
+        options = self._build_options(config)
+
+        body: dict[str, Any] = {
+            "model": config.model,
+            "prompt": prompt,
+            "system": system_prompt,
+            "stream": stream,
+            "options": options if options else None,
+            "format": config.format,
+            "keep_alive": config.keep_alive,
+            "raw": config.raw,
+            "suffix": config.suffix,
+        }
+        return drop_nones(body)
 
     @staticmethod
     def _build_options(config: OllamaConfig) -> dict[str, Any]:
@@ -255,6 +365,47 @@ def to_ollama_messages(
         output.append(payload)
 
     return output
+
+
+def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
+    system_prompt: str | None = None
+    prompt: str | None = None
+
+    for message in messages:
+        if message.images:
+            raise ConfigValidationError("Ollama /api/generate does not support images")
+        if message.role is Role.TOOL:
+            raise ConfigValidationError("Ollama /api/generate does not support tool messages")
+        if message.tool_calls:
+            raise ConfigValidationError(
+                "Ollama /api/generate does not support assistant tool calls"
+            )
+
+        if message.role is Role.SYSTEM:
+            if system_prompt is not None:
+                raise ConfigValidationError(
+                    "Ollama /api/generate supports at most one system message"
+                )
+            system_prompt = message.content or ""
+            continue
+
+        if message.role is Role.USER:
+            if prompt is not None:
+                raise ConfigValidationError(
+                    "Ollama /api/generate supports exactly one user message"
+                )
+            prompt = message.content or ""
+            continue
+
+        raise ConfigValidationError(
+            "Ollama /api/generate only supports system and user messages"
+        )
+
+    if prompt is None:
+        raise ConfigValidationError(
+            "Ollama /api/generate requires exactly one user message"
+        )
+    return system_prompt, prompt
 
 
 def parse_ollama_tool_calls(raw_tool_calls: Any) -> list[ToolCall] | None:

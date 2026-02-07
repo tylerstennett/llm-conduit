@@ -145,3 +145,42 @@ async def test_ollama_ndjson_stream_normalizes_chunks(sample_messages, sample_to
     assert chunks[-1].usage.total_tokens == 7
 
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ollama_generate_ndjson_stream_normalizes_chunks(sample_messages) -> None:
+    requested_path: str | None = None
+    ndjson_payload = "\n".join(
+        [
+            '{"model":"qwen3","response":"Hel","done":false}',
+            '{"model":"qwen3","response":"lo","done":true,"done_reason":"stop","prompt_eval_count":4,"eval_count":2}',
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requested_path
+        requested_path = request.url.path
+        return httpx.Response(
+            200,
+            text=ndjson_payload,
+            headers={"content-type": "application/x-ndjson"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OllamaProvider(OllamaConfig(model="qwen3", raw=True), http_client=client)
+
+    chunks = [
+        chunk
+        async for chunk in provider.chat_stream(
+            ChatRequest(messages=sample_messages, stream=True),
+            effective_config=provider.config,
+        )
+    ]
+
+    assert requested_path == "/api/generate"
+    assert "".join(chunk.content or "" for chunk in chunks) == "Hello"
+    assert chunks[-1].finish_reason == "stop"
+    assert chunks[-1].usage is not None
+    assert chunks[-1].usage.total_tokens == 6
+
+    await client.aclose()

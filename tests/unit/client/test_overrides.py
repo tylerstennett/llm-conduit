@@ -45,6 +45,34 @@ def test_openrouter_nested_override_merges_provider_object() -> None:
     assert updated.provider_prefs.allow_fallbacks is False
 
 
+def test_vllm_new_fields_accept_overrides() -> None:
+    client = Conduit(VLLMConfig(model="m"))
+    updated = client._apply_overrides(
+        {
+            "response_format": {"type": "json_object"},
+            "stream_options": {"include_usage": True},
+        }
+    )
+    assert isinstance(updated, VLLMConfig)
+    assert updated.response_format == {"type": "json_object"}
+    assert updated.stream_options == {"include_usage": True}
+
+
+def test_openrouter_new_fields_accept_overrides() -> None:
+    client = Conduit(OpenRouterConfig(model="openai/gpt-4o-mini", api_key="k"))
+    updated = client._apply_overrides(
+        {
+            "reasoning": {"effort": "high"},
+            "transforms": ["middle-out"],
+            "include": ["reasoning"],
+        }
+    )
+    assert isinstance(updated, OpenRouterConfig)
+    assert updated.reasoning == {"effort": "high"}
+    assert updated.transforms == ["middle-out"]
+    assert updated.include == ["reasoning"]
+
+
 @pytest.mark.asyncio
 async def test_transport_uses_override_base_url_and_api_key() -> None:
     requested_url: str | None = None

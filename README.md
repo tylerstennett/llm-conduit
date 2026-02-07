@@ -34,14 +34,20 @@ print(response.content)
 ### vLLM
 
 - Uses `/chat/completions` under your configured base URL.
+- Supports `response_format` (for example `{ "type": "json_object" }`).
+- Supports `stream_options` for streaming requests (for example `{ "include_usage": true }`).
 - Supports `structured_outputs` directly.
 - Legacy `guided_json`, `guided_regex`, `guided_choice`, and `guided_grammar`
   are accepted and mapped to `structured_outputs` with deprecation warnings.
+- `best_of` and `guided_decoding_backend` are intentionally not supported by this client.
 - Tool choice values `auto`, `none`, `required`, and named function objects are supported.
 
 ### Ollama
 
-- Uses `/api/chat`.
+- Uses `/api/chat` by default.
+- Automatically uses `/api/generate` when `raw=True` or `suffix` is set.
+- In generate mode, requests are completion-style: exactly one user message plus
+  an optional system message, with no tools, tool messages, tool calls, or images.
 - Sampling/runtime fields are sent in `options`.
 - Tool choice supports `auto` and `none` semantics.
 - Canonical `tool_call_id` values are synthesized as `ollama_call_{index}`.
@@ -55,6 +61,9 @@ print(response.content)
   - `HTTP-Referer` from `app_url`
   - `X-Title` from `app_name`
 - Supports provider routing via `provider` and `route`.
+- Supports passthrough `reasoning`, `transforms`, and `include`.
+- `include` and `transforms` are provider/model/endpoint dependent and may not
+  be honored by every upstream route.
 
 ## Strict config overrides
 
@@ -88,4 +97,3 @@ Environment variables:
 pip install -e .[dev]
 pytest
 ```
-

@@ -32,6 +32,8 @@ class OllamaConfig(BaseLLMConfig):
     keep_alive: str | int | float | None = None
     format: str | dict[str, Any] | None = None
     think: bool | Literal["high", "medium", "low"] | None = None
+    raw: bool | None = None
+    suffix: str | None = None
 
     logprobs: bool | None = None
     top_logprobs: int | None = Field(default=None, ge=0)
