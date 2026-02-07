@@ -65,6 +65,10 @@ class ProviderUnavailableError(ProviderError):
     """Raised when provider service is unavailable."""
 
 
+class ResponseParseError(ProviderError):
+    """Raised when a provider response cannot be parsed."""
+
+
 class ToolError(ConduitError):
     """Base exception for tool schema and parsing failures."""
 
@@ -79,4 +83,3 @@ class ToolCallParseError(ToolError):
 
 class StreamError(ConduitError):
     """Raised when a stream fails or returns malformed data."""
-

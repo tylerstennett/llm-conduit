@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 import pytest
 
-from conduit.config import OllamaConfig, VLLMConfig
+from conduit.config import OllamaConfig, OpenRouterConfig, VLLMConfig
 from conduit.exceptions import (
     AuthenticationError,
     ContextLengthError,
@@ -14,7 +16,9 @@ from conduit.exceptions import (
     ToolCallParseError,
 )
 from conduit.models.messages import ChatRequest, Message, Role
+from conduit.providers import BaseProvider
 from conduit.providers.ollama import OllamaProvider
+from conduit.providers.openrouter import OpenRouterProvider
 from conduit.providers.vllm import VLLMProvider
 
 
@@ -80,3 +84,36 @@ def test_ollama_missing_tool_name_mapping_raises() -> None:
             stream=False,
         )
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_factory",
+    [
+        lambda client: VLLMProvider(VLLMConfig(model="m"), http_client=client),
+        lambda client: OllamaProvider(OllamaConfig(model="m"), http_client=client),
+        lambda client: OpenRouterProvider(
+            OpenRouterConfig(model="openai/gpt-4o-mini", api_key="k"),
+            http_client=client,
+        ),
+    ],
+)
+async def test_stream_http_errors_raise_provider_errors_not_response_not_read(
+    provider_factory: Callable[[httpx.AsyncClient], BaseProvider],
+) -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            429,
+            json={"error": {"message": "too many requests"}},
+        )
+    )
+    client = httpx.AsyncClient(transport=transport)
+    provider = provider_factory(client)
+
+    with pytest.raises(RateLimitError, match="too many requests"):
+        async for _ in provider.chat_stream(
+            ChatRequest(messages=[Message(role=Role.USER, content="hi")], stream=True),
+            effective_config=provider.config,
+        ):
+            pass
+
+    await client.aclose()

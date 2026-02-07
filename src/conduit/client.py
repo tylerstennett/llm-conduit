@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, AsyncIterator, Iterator
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Iterator, TypeVar
 
 from pydantic import ValidationError
 
@@ -12,6 +14,97 @@ from conduit.models.messages import ChatRequest, ChatResponse, ChatResponseChunk
 from conduit.providers import BaseProvider, OllamaProvider, OpenRouterProvider, VLLMProvider
 from conduit.retry import RetryPolicy
 from conduit.tools.schema import ToolDefinition
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSpec:
+    name: str
+    config_type: type[BaseLLMConfig]
+    provider_type: type[BaseProvider]
+    config_from_env: Callable[[], BaseLLMConfig]
+
+
+def _build_vllm_config_from_env() -> BaseLLMConfig:
+    model = os.getenv("CONDUIT_VLLM_MODEL") or os.getenv("VLLM_MODEL")
+    if not model:
+        raise ConfigValidationError(
+            "missing CONDUIT_VLLM_MODEL or VLLM_MODEL environment variable"
+        )
+    return VLLMConfig(
+        model=model,
+        base_url=os.getenv("CONDUIT_VLLM_URL", "http://localhost:8000/v1"),
+        api_key=os.getenv("CONDUIT_VLLM_API_KEY"),
+    )
+
+
+def _build_ollama_config_from_env() -> BaseLLMConfig:
+    model = os.getenv("CONDUIT_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL")
+    if not model:
+        raise ConfigValidationError(
+            "missing CONDUIT_OLLAMA_MODEL or OLLAMA_MODEL environment variable"
+        )
+    return OllamaConfig(
+        model=model,
+        base_url=os.getenv("CONDUIT_OLLAMA_URL", "http://localhost:11434"),
+        api_key=os.getenv("CONDUIT_OLLAMA_API_KEY"),
+    )
+
+
+def _build_openrouter_config_from_env() -> BaseLLMConfig:
+    model = os.getenv("CONDUIT_OPENROUTER_MODEL")
+    api_key = os.getenv("CONDUIT_OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY")
+    if not model:
+        raise ConfigValidationError("missing CONDUIT_OPENROUTER_MODEL")
+    if not api_key:
+        raise ConfigValidationError(
+            "missing CONDUIT_OPENROUTER_KEY or OPENROUTER_API_KEY"
+        )
+    return OpenRouterConfig(
+        model=model,
+        api_key=api_key,
+        base_url=os.getenv(
+            "CONDUIT_OPENROUTER_URL",
+            "https://openrouter.ai/api/v1",
+        ),
+        app_name=os.getenv("CONDUIT_OPENROUTER_APP_NAME"),
+        app_url=os.getenv("CONDUIT_OPENROUTER_APP_URL"),
+    )
+
+
+_PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
+    ProviderSpec(
+        name="vllm",
+        config_type=VLLMConfig,
+        provider_type=VLLMProvider,
+        config_from_env=_build_vllm_config_from_env,
+    ),
+    ProviderSpec(
+        name="ollama",
+        config_type=OllamaConfig,
+        provider_type=OllamaProvider,
+        config_from_env=_build_ollama_config_from_env,
+    ),
+    ProviderSpec(
+        name="openrouter",
+        config_type=OpenRouterConfig,
+        provider_type=OpenRouterProvider,
+        config_from_env=_build_openrouter_config_from_env,
+    ),
+)
+_PROVIDER_SPECS_BY_NAME = {spec.name: spec for spec in _PROVIDER_SPECS}
+
+
+def _supported_provider_names() -> str:
+    return ", ".join(spec.name for spec in _PROVIDER_SPECS)
+
+
+def _provider_spec_for_config(config: BaseLLMConfig) -> ProviderSpec:
+    for spec in _PROVIDER_SPECS:
+        if isinstance(config, spec.config_type):
+            return spec
+    raise ConfigValidationError(f"unsupported config type: {type(config)!r}")
 
 
 class Conduit:
@@ -100,61 +193,17 @@ class Conduit:
                 attempt += 1
                 if not self.retry_policy.should_retry(exc, attempt):
                     raise
-                await asyncio.sleep(self.retry_policy.backoff_for_attempt(attempt))
+                await asyncio.sleep(self.retry_policy.backoff_for_attempt(attempt, exc))
 
     @staticmethod
     def from_env(provider: str = "openrouter") -> "Conduit":
         normalized = provider.strip().lower()
-        if normalized == "vllm":
-            model = os.getenv("CONDUIT_VLLM_MODEL") or os.getenv("VLLM_MODEL")
-            if not model:
-                raise ConfigValidationError(
-                    "missing CONDUIT_VLLM_MODEL or VLLM_MODEL environment variable"
-                )
-            config = VLLMConfig(
-                model=model,
-                base_url=os.getenv("CONDUIT_VLLM_URL", "http://localhost:8000/v1"),
-                api_key=os.getenv("CONDUIT_VLLM_API_KEY"),
+        spec = _PROVIDER_SPECS_BY_NAME.get(normalized)
+        if spec is None:
+            raise ConfigValidationError(
+                f"provider must be one of: {_supported_provider_names()}"
             )
-            return Conduit(config)
-
-        if normalized == "ollama":
-            model = os.getenv("CONDUIT_OLLAMA_MODEL") or os.getenv("OLLAMA_MODEL")
-            if not model:
-                raise ConfigValidationError(
-                    "missing CONDUIT_OLLAMA_MODEL or OLLAMA_MODEL environment variable"
-                )
-            config = OllamaConfig(
-                model=model,
-                base_url=os.getenv("CONDUIT_OLLAMA_URL", "http://localhost:11434"),
-                api_key=os.getenv("CONDUIT_OLLAMA_API_KEY"),
-            )
-            return Conduit(config)
-
-        if normalized == "openrouter":
-            model = os.getenv("CONDUIT_OPENROUTER_MODEL")
-            api_key = os.getenv("CONDUIT_OPENROUTER_KEY") or os.getenv("OPENROUTER_API_KEY")
-            if not model:
-                raise ConfigValidationError("missing CONDUIT_OPENROUTER_MODEL")
-            if not api_key:
-                raise ConfigValidationError(
-                    "missing CONDUIT_OPENROUTER_KEY or OPENROUTER_API_KEY"
-                )
-            config = OpenRouterConfig(
-                model=model,
-                api_key=api_key,
-                base_url=os.getenv(
-                    "CONDUIT_OPENROUTER_URL",
-                    "https://openrouter.ai/api/v1",
-                ),
-                app_name=os.getenv("CONDUIT_OPENROUTER_APP_NAME"),
-                app_url=os.getenv("CONDUIT_OPENROUTER_APP_URL"),
-            )
-            return Conduit(config)
-
-        raise ConfigValidationError(
-            "provider must be one of: vllm, ollama, openrouter"
-        )
+        return Conduit(spec.config_from_env())
 
     async def _chat_with_retry(
         self,
@@ -172,7 +221,7 @@ class Conduit:
                 attempt += 1
                 if not self.retry_policy.should_retry(exc, attempt):
                     raise
-                await asyncio.sleep(self.retry_policy.backoff_for_attempt(attempt))
+                await asyncio.sleep(self.retry_policy.backoff_for_attempt(attempt, exc))
 
     async def _aggregate_stream_response(
         self,
@@ -235,13 +284,8 @@ class Conduit:
         return validated
 
     def _create_provider(self, config: BaseLLMConfig) -> BaseProvider:
-        if isinstance(config, VLLMConfig):
-            return VLLMProvider(config, timeout=self.timeout)
-        if isinstance(config, OllamaConfig):
-            return OllamaProvider(config, timeout=self.timeout)
-        if isinstance(config, OpenRouterConfig):
-            return OpenRouterProvider(config, timeout=self.timeout)
-        raise ConfigValidationError(f"unsupported config type: {type(config)!r}")
+        spec = _provider_spec_for_config(config)
+        return spec.provider_type(config, timeout=self.timeout)
 
 
 class SyncConduit:
@@ -258,6 +302,15 @@ class SyncConduit:
             retry_policy=retry_policy,
             timeout=timeout,
         )
+        self._loop = asyncio.new_event_loop()
+        self._closed = False
+
+    def __enter__(self) -> "SyncConduit":
+        self._ensure_open()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
 
     def chat(
         self,
@@ -267,6 +320,7 @@ class SyncConduit:
         stream: bool = False,
         config_overrides: dict[str, Any] | None = None,
     ) -> ChatResponse:
+        self._ensure_open()
         return self._run(
             self._async_client.chat(
                 messages=messages,
@@ -284,14 +338,8 @@ class SyncConduit:
         tool_choice: str | dict[str, Any] | None = None,
         config_overrides: dict[str, Any] | None = None,
     ) -> Iterator[ChatResponseChunk]:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            raise RuntimeError(
-                "SyncConduit cannot run inside an existing event loop; use Conduit instead"
-            )
+        self._ensure_open()
+        self._ensure_not_running_loop()
 
         async_iter = self._async_client.chat_stream(
             messages=messages,
@@ -300,33 +348,54 @@ class SyncConduit:
             config_overrides=config_overrides,
         )
         iterator = async_iter.__aiter__()
-        loop = asyncio.new_event_loop()
 
         try:
             while True:
                 try:
-                    chunk = loop.run_until_complete(iterator.__anext__())
+                    chunk = self._run(iterator.__anext__())
                 except StopAsyncIteration:
                     break
                 yield chunk
         finally:
             aclose = getattr(iterator, "aclose", None)
             if callable(aclose):
-                loop.run_until_complete(aclose())
-            loop.run_until_complete(loop.shutdown_asyncgens())
-            loop.close()
+                try:
+                    self._run(aclose())
+                except RuntimeError:
+                    pass
 
     def close(self) -> None:
-        self._run(self._async_client.aclose())
+        if self._closed:
+            return
 
-    def _run(self, coro: Any) -> Any:
+        self._ensure_not_running_loop()
+        try:
+            self._loop.run_until_complete(self._async_client.aclose())
+            self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            self._loop.run_until_complete(self._loop.shutdown_default_executor())
+        finally:
+            self._closed = True
+            if not self._loop.is_closed():
+                self._loop.close()
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("SyncConduit client is closed")
+
+    @staticmethod
+    def _ensure_not_running_loop() -> None:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(coro)
+            return
         raise RuntimeError(
             "SyncConduit cannot run inside an existing event loop; use Conduit instead"
         )
+
+    def _run(self, awaitable: Awaitable[T]) -> T:
+        self._ensure_open()
+        self._ensure_not_running_loop()
+        return self._loop.run_until_complete(awaitable)
 
 
 def deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
