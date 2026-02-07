@@ -7,7 +7,12 @@ import httpx
 
 from conduit.config.base import BaseLLMConfig
 from conduit.config.ollama import OllamaConfig
-from conduit.exceptions import ConfigValidationError, StreamError, ToolCallParseError
+from conduit.exceptions import (
+    ConfigValidationError,
+    ResponseParseError,
+    StreamError,
+    ToolCallParseError,
+)
 from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
@@ -20,6 +25,7 @@ from conduit.models.messages import (
 )
 from conduit.providers.base import BaseProvider
 from conduit.providers.streaming import iter_ndjson
+from conduit.providers.utils import drop_nones
 from conduit.tools.schema import ToolCall, parse_tool_arguments
 
 
@@ -86,7 +92,7 @@ class OllamaProvider(BaseProvider):
 
         message = raw.get("message")
         if not isinstance(message, dict):
-            raise StreamError("Ollama response did not contain message object")
+            raise ResponseParseError("Ollama response did not contain message object")
 
         return ChatResponse(
             content=message.get("content") if isinstance(message.get("content"), str) else None,
@@ -120,8 +126,7 @@ class OllamaProvider(BaseProvider):
                 json=payload,
                 headers=headers,
             ) as response:
-                if response.status_code >= 400:
-                    raise self.map_http_error(response)
+                await self.raise_for_stream_status(response)
 
                 async for raw_chunk in iter_ndjson(response):
                     message = raw_chunk.get("message")
@@ -334,15 +339,3 @@ def parse_ollama_usage(raw: dict[str, Any]) -> UsageStats | None:
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
     )
-
-
-def drop_nones(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: drop_nones(inner)
-            for key, inner in value.items()
-            if inner is not None
-        }
-    if isinstance(value, list):
-        return [drop_nones(item) for item in value]
-    return value

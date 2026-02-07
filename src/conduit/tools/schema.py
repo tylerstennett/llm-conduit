@@ -8,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from conduit.exceptions import ToolSchemaError
 
 
+def _default_tool_parameters() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {},
+    }
+
+
 class ToolDefinition(BaseModel):
     """Canonical function tool definition."""
 
@@ -15,7 +22,10 @@ class ToolDefinition(BaseModel):
 
     name: str
     description: str
-    parameters: dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(
+        default_factory=_default_tool_parameters,
+        validate_default=True,
+    )
 
     @field_validator("name")
     @classmethod
@@ -80,4 +90,3 @@ def parse_tool_arguments(raw_arguments: str | dict[str, Any] | None) -> dict[str
             raise ToolSchemaError("tool arguments must decode to a JSON object")
         return parsed
     raise ToolSchemaError("unsupported tool arguments type")
-

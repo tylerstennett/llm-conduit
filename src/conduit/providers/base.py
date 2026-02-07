@@ -133,6 +133,12 @@ class BaseProvider(ABC):
             )
         return data
 
+    async def raise_for_stream_status(self, response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+        await response.aread()
+        raise self.map_http_error(response)
+
     def map_http_error(self, response: httpx.Response) -> ProviderError:
         message = self.extract_error_message(response)
         status_code = response.status_code
