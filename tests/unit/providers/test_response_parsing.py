@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from conduit.config import OllamaConfig, OpenRouterConfig, VLLMConfig
+from conduit.exceptions import ResponseParseError
 from conduit.models.messages import ChatRequest, Message, Role
 from conduit.providers.ollama import OllamaProvider
 from conduit.providers.openrouter import OpenRouterProvider
@@ -198,3 +199,53 @@ def test_ollama_round_trip_tool_name_mapping(sample_tools) -> None:
     )
 
     assert body["messages"][1]["tool_name"] == "get_weather"
+
+
+@pytest.mark.asyncio
+async def test_vllm_non_stream_malformed_payload_raises_response_parse_error(sample_messages) -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"model": "m"}))
+    client = httpx.AsyncClient(transport=transport)
+    provider = VLLMProvider(VLLMConfig(model="m"), http_client=client)
+
+    with pytest.raises(ResponseParseError, match="did not contain choices"):
+        await provider.chat(
+            ChatRequest(messages=sample_messages),
+            effective_config=provider.config,
+        )
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_openrouter_non_stream_malformed_payload_raises_response_parse_error(
+    sample_messages,
+) -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"model": "m"}))
+    client = httpx.AsyncClient(transport=transport)
+    provider = OpenRouterProvider(
+        OpenRouterConfig(model="openai/gpt-4o-mini", api_key="k"),
+        http_client=client,
+    )
+
+    with pytest.raises(ResponseParseError, match="did not contain choices"):
+        await provider.chat(
+            ChatRequest(messages=sample_messages),
+            effective_config=provider.config,
+        )
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ollama_non_stream_malformed_payload_raises_response_parse_error(sample_messages) -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"model": "qwen3"}))
+    client = httpx.AsyncClient(transport=transport)
+    provider = OllamaProvider(OllamaConfig(model="qwen3"), http_client=client)
+
+    with pytest.raises(ResponseParseError, match="did not contain message object"):
+        await provider.chat(
+            ChatRequest(messages=sample_messages),
+            effective_config=provider.config,
+        )
+
+    await client.aclose()

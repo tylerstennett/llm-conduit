@@ -7,7 +7,7 @@ import httpx
 
 from conduit.config.base import BaseLLMConfig
 from conduit.config.vllm import VLLMConfig
-from conduit.exceptions import ConfigValidationError, StreamError
+from conduit.exceptions import ConfigValidationError, ResponseParseError, StreamError
 from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
@@ -24,6 +24,7 @@ from conduit.providers.base import (
     tool_definitions_to_openai,
 )
 from conduit.providers.streaming import iter_sse_data, parse_openai_stream_tool_calls
+from conduit.providers.utils import drop_nones, extract_openai_message_content
 
 
 class VLLMProvider(BaseProvider):
@@ -110,15 +111,15 @@ class VLLMProvider(BaseProvider):
 
         choices = raw.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise StreamError("vLLM response did not contain choices")
+            raise ResponseParseError("vLLM response did not contain choices")
 
         first_choice = choices[0]
         if not isinstance(first_choice, dict):
-            raise StreamError("vLLM response choice has unexpected shape")
+            raise ResponseParseError("vLLM response choice has unexpected shape")
 
         message = first_choice.get("message")
         if not isinstance(message, dict):
-            raise StreamError("vLLM response choice did not contain a message")
+            raise ResponseParseError("vLLM response choice did not contain a message")
 
         return ChatResponse(
             content=extract_openai_message_content(message.get("content")),
@@ -153,8 +154,7 @@ class VLLMProvider(BaseProvider):
                 json=payload,
                 headers=headers,
             ) as response:
-                if response.status_code >= 400:
-                    raise self.map_http_error(response)
+                await self.raise_for_stream_status(response)
 
                 async for data in iter_sse_data(response):
                     if data == "[DONE]":
@@ -219,29 +219,3 @@ class VLLMProvider(BaseProvider):
                     yield chunk
         except httpx.HTTPError as exc:
             raise StreamError(f"vLLM streaming request failed: {exc}") from exc
-
-
-def extract_openai_message_content(content: Any) -> str | None:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-        return "".join(parts) if parts else None
-    return None
-
-
-def drop_nones(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: drop_nones(inner)
-            for key, inner in value.items()
-            if inner is not None
-        }
-    if isinstance(value, list):
-        return [drop_nones(item) for item in value]
-    return value

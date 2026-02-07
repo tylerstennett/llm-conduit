@@ -7,7 +7,7 @@ import httpx
 
 from conduit.config.base import BaseLLMConfig
 from conduit.config.openrouter import OpenRouterConfig
-from conduit.exceptions import StreamError
+from conduit.exceptions import ResponseParseError, StreamError
 from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
@@ -24,6 +24,7 @@ from conduit.providers.base import (
     tool_definitions_to_openai,
 )
 from conduit.providers.streaming import iter_sse_data, parse_openai_stream_tool_calls
+from conduit.providers.utils import drop_nones, extract_openai_message_content
 
 
 class OpenRouterProvider(BaseProvider):
@@ -108,15 +109,15 @@ class OpenRouterProvider(BaseProvider):
 
         choices = raw.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise StreamError("OpenRouter response did not contain choices")
+            raise ResponseParseError("OpenRouter response did not contain choices")
 
         first_choice = choices[0]
         if not isinstance(first_choice, dict):
-            raise StreamError("OpenRouter response choice has unexpected shape")
+            raise ResponseParseError("OpenRouter response choice has unexpected shape")
 
         message = first_choice.get("message")
         if not isinstance(message, dict):
-            raise StreamError("OpenRouter response choice did not contain a message")
+            raise ResponseParseError("OpenRouter response choice did not contain a message")
 
         return ChatResponse(
             content=extract_openai_message_content(message.get("content")),
@@ -150,8 +151,7 @@ class OpenRouterProvider(BaseProvider):
                 json=payload,
                 headers=headers,
             ) as response:
-                if response.status_code >= 400:
-                    raise self.map_http_error(response)
+                await self.raise_for_stream_status(response)
 
                 async for data in iter_sse_data(response):
                     if data == "[DONE]":
@@ -228,29 +228,3 @@ class OpenRouterProvider(BaseProvider):
                     yield chunk
         except httpx.HTTPError as exc:
             raise StreamError(f"OpenRouter streaming request failed: {exc}") from exc
-
-
-def extract_openai_message_content(content: Any) -> str | None:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-        return "".join(parts) if parts else None
-    return None
-
-
-def drop_nones(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: drop_nones(inner)
-            for key, inner in value.items()
-            if inner is not None
-        }
-    if isinstance(value, list):
-        return [drop_nones(item) for item in value]
-    return value
