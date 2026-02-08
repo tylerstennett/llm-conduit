@@ -26,6 +26,7 @@ class ToolDefinition(BaseModel):
         default_factory=_default_tool_parameters,
         validate_default=True,
     )
+    strict: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -42,14 +43,18 @@ class ToolDefinition(BaseModel):
             raise ValueError("tool parameters root must set type='object'")
         return value
 
-    def to_openai_tool(self) -> dict[str, Any]:
+    def to_openai_tool(self, *, include_strict: bool = False) -> dict[str, Any]:
+        function: dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
+        if include_strict and self.strict is not None:
+            function["strict"] = self.strict
+
         return {
             "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            },
+            "function": function,
         }
 
 

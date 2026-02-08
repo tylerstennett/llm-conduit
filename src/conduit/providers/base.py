@@ -336,10 +336,30 @@ def _serialize_openai_content_parts(
 
 def tool_definitions_to_openai(
     tools: list[ToolDefinition] | None,
+    *,
+    include_strict: bool = False,
 ) -> list[dict[str, Any]] | None:
     if not tools:
         return None
-    return [tool.to_openai_tool() for tool in tools]
+    return [tool.to_openai_tool(include_strict=include_strict) for tool in tools]
+
+
+def ensure_tool_strict_supported(
+    tools: list[ToolDefinition] | None,
+    *,
+    provider_name: str,
+    supports_tool_strict: bool,
+) -> None:
+    if supports_tool_strict or not tools:
+        return
+
+    strict_tool_names = sorted(tool.name for tool in tools if tool.strict is True)
+    if strict_tool_names:
+        joined = ", ".join(strict_tool_names)
+        raise ConfigValidationError(
+            f"{provider_name} does not support strict tool schemas; "
+            f"strict=true was set for tool(s): {joined}"
+        )
 
 
 def parse_openai_tool_calls(

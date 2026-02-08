@@ -16,6 +16,7 @@ from conduit.models.messages import (
 )
 from conduit.providers.base import (
     BaseProvider,
+    ensure_tool_strict_supported,
     normalize_stop,
     parse_openai_tool_calls,
     parse_usage,
@@ -54,6 +55,11 @@ class OpenRouterProvider(BaseProvider):
         stream: bool,
     ) -> dict[str, Any]:
         config = cast(OpenRouterConfig, effective_config)
+        ensure_tool_strict_supported(
+            request.tools,
+            provider_name=self.provider_name,
+            supports_tool_strict=True,
+        )
 
         body: dict[str, Any] = {
             "model": config.model,
@@ -89,7 +95,10 @@ class OpenRouterProvider(BaseProvider):
             ),
             "plugins": config.plugins,
             "user": config.user,
-            "tools": tool_definitions_to_openai(request.tools),
+            "tools": tool_definitions_to_openai(
+                request.tools,
+                include_strict=True,
+            ),
             "tool_choice": tool_choice_to_openai_payload(request.tool_choice),
         }
 
