@@ -25,7 +25,7 @@ from conduit.providers.base import (
 )
 from conduit.providers.streaming import iter_sse_data, parse_openai_stream_tool_calls
 from conduit.providers.utils import drop_nones, extract_openai_message_content
-from conduit.utils.streaming import should_emit_stream_chunk
+from conduit.utils.streaming import should_complete_tool_calls, should_emit_stream_chunk
 
 
 class VLLMProvider(BaseProvider):
@@ -147,6 +147,9 @@ class VLLMProvider(BaseProvider):
         url = self.make_url("/chat/completions", effective_config=effective_config)
 
         accumulator = ToolCallChunkAccumulator()
+        emitted_completed_tool_calls = False
+        saw_tool_call_delta = False
+        allow_terminal_tool_call_flush = True
 
         try:
             async with self.http_client.stream(
@@ -159,6 +162,14 @@ class VLLMProvider(BaseProvider):
 
                 async for data in iter_sse_data(response):
                     if data == "[DONE]":
+                        if (
+                            allow_terminal_tool_call_flush
+                            and not emitted_completed_tool_calls
+                        ):
+                            completed_tool_calls = accumulator.completed_calls() or None
+                            if completed_tool_calls is not None:
+                                emitted_completed_tool_calls = True
+                                yield ChatResponseChunk(completed_tool_calls=completed_tool_calls)
                         break
 
                     try:
@@ -169,12 +180,47 @@ class VLLMProvider(BaseProvider):
                     if not isinstance(raw_chunk, dict):
                         raise StreamError("stream chunk must decode to an object")
 
+                    usage = parse_usage(raw_chunk.get("usage"))
                     choices = raw_chunk.get("choices")
                     if not isinstance(choices, list) or not choices:
+                        completed_tool_calls = None
+                        if (
+                            usage is not None
+                            and allow_terminal_tool_call_flush
+                            and not emitted_completed_tool_calls
+                        ):
+                            completed_tool_calls = accumulator.completed_calls() or None
+                            if completed_tool_calls is not None:
+                                emitted_completed_tool_calls = True
+                        chunk = ChatResponseChunk(
+                            completed_tool_calls=completed_tool_calls,
+                            usage=usage,
+                            raw_chunk=raw_chunk,
+                        )
+                        if not should_emit_stream_chunk(chunk):
+                            continue
+                        yield chunk
                         continue
 
                     first_choice = choices[0]
                     if not isinstance(first_choice, dict):
+                        completed_tool_calls = None
+                        if (
+                            usage is not None
+                            and allow_terminal_tool_call_flush
+                            and not emitted_completed_tool_calls
+                        ):
+                            completed_tool_calls = accumulator.completed_calls() or None
+                            if completed_tool_calls is not None:
+                                emitted_completed_tool_calls = True
+                        chunk = ChatResponseChunk(
+                            completed_tool_calls=completed_tool_calls,
+                            usage=usage,
+                            raw_chunk=raw_chunk,
+                        )
+                        if not should_emit_stream_chunk(chunk):
+                            continue
+                        yield chunk
                         continue
 
                     delta = first_choice.get("delta")
@@ -187,18 +233,25 @@ class VLLMProvider(BaseProvider):
 
                     partial_calls = parse_openai_stream_tool_calls(delta.get("tool_calls"))
                     if partial_calls:
+                        saw_tool_call_delta = True
                         for partial in partial_calls:
                             accumulator.ingest(partial)
 
-                    finish_reason = first_choice.get("finish_reason")
-                    if finish_reason is not None and not isinstance(finish_reason, str):
-                        finish_reason = None
-
-                    usage = parse_usage(raw_chunk.get("usage"))
+                    raw_finish_reason = first_choice.get("finish_reason")
+                    finish_reason = raw_finish_reason if isinstance(raw_finish_reason, str) else None
 
                     completed_tool_calls = None
-                    if finish_reason == "tool_calls":
-                        completed_tool_calls = accumulator.completed_calls() or None
+                    if finish_reason is not None:
+                        if should_complete_tool_calls(
+                            finish_reason=finish_reason,
+                            saw_tool_call_delta=saw_tool_call_delta,
+                        ):
+                            if not emitted_completed_tool_calls:
+                                completed_tool_calls = accumulator.completed_calls() or None
+                                if completed_tool_calls is not None:
+                                    emitted_completed_tool_calls = True
+                        else:
+                            allow_terminal_tool_call_flush = False
 
                     chunk = ChatResponseChunk(
                         content=content,
@@ -212,5 +265,10 @@ class VLLMProvider(BaseProvider):
                     if not should_emit_stream_chunk(chunk):
                         continue
                     yield chunk
+
+            if allow_terminal_tool_call_flush and not emitted_completed_tool_calls:
+                completed_tool_calls = accumulator.completed_calls() or None
+                if completed_tool_calls is not None:
+                    yield ChatResponseChunk(completed_tool_calls=completed_tool_calls)
         except httpx.HTTPError as exc:
             raise StreamError(f"vLLM streaming request failed: {exc}") from exc
