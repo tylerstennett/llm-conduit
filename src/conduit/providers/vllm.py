@@ -25,6 +25,7 @@ from conduit.providers.base import (
 )
 from conduit.providers.streaming import iter_sse_data, parse_openai_stream_tool_calls
 from conduit.providers.utils import drop_nones, extract_openai_message_content
+from conduit.utils.streaming import should_emit_stream_chunk
 
 
 class VLLMProvider(BaseProvider):
@@ -208,13 +209,7 @@ class VLLMProvider(BaseProvider):
                         raw_chunk=raw_chunk,
                     )
 
-                    if (
-                        chunk.content is None
-                        and chunk.tool_calls is None
-                        and chunk.completed_tool_calls is None
-                        and chunk.finish_reason is None
-                        and chunk.usage is None
-                    ):
+                    if not should_emit_stream_chunk(chunk):
                         continue
                     yield chunk
         except httpx.HTTPError as exc:
