@@ -29,6 +29,7 @@ from conduit.providers.base import BaseProvider
 from conduit.providers.streaming import iter_ndjson
 from conduit.providers.utils import drop_nones
 from conduit.tools.schema import ToolCall, parse_tool_arguments
+from conduit.utils.streaming import should_emit_stream_chunk
 
 
 class OllamaProvider(BaseProvider):
@@ -124,8 +125,7 @@ class OllamaProvider(BaseProvider):
                     json=payload,
                     headers=headers,
                 ) as response:
-                    if response.status_code >= 400:
-                        raise self.map_http_error(response)
+                    await self.raise_for_stream_status(response)
 
                     async for raw_chunk in iter_ndjson(response):
                         content = raw_chunk.get("response")
@@ -147,11 +147,7 @@ class OllamaProvider(BaseProvider):
                             raw_chunk=raw_chunk,
                         )
 
-                        if (
-                            chunk.content is None
-                            and chunk.finish_reason is None
-                            and chunk.usage is None
-                        ):
+                        if not should_emit_stream_chunk(chunk):
                             continue
                         yield chunk
             except httpx.HTTPError as exc:
@@ -205,13 +201,7 @@ class OllamaProvider(BaseProvider):
                         raw_chunk=raw_chunk,
                     )
 
-                    if (
-                        chunk.content is None
-                        and chunk.tool_calls is None
-                        and chunk.completed_tool_calls is None
-                        and chunk.finish_reason is None
-                        and chunk.usage is None
-                    ):
+                    if not should_emit_stream_chunk(chunk):
                         continue
                     yield chunk
         except httpx.HTTPError as exc:

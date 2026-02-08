@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from conduit.client import Conduit
+from conduit.client import Conduit, deep_merge
 from conduit.config import OpenRouterConfig, OpenRouterProviderPrefs, VLLMConfig
 from conduit.exceptions import ConfigValidationError
 from conduit.models.messages import ChatRequest, ChatResponse, Message, Role, TextPart
@@ -14,6 +14,60 @@ def test_overrides_apply_and_revalidate() -> None:
     updated = client._apply_overrides({"temperature": 0.1})
     assert isinstance(updated, VLLMConfig)
     assert updated.temperature == 0.1
+
+
+def test_deep_merge_merges_nested_dictionaries() -> None:
+    base = {
+        "temperature": 0.7,
+        "provider": {
+            "order": ["a"],
+            "allow_fallbacks": True,
+        },
+    }
+    updates = {
+        "provider": {
+            "allow_fallbacks": False,
+            "only": ["b"],
+        }
+    }
+
+    merged = deep_merge(base, updates)
+
+    assert merged == {
+        "temperature": 0.7,
+        "provider": {
+            "order": ["a"],
+            "allow_fallbacks": False,
+            "only": ["b"],
+        },
+    }
+
+
+def test_deep_merge_replaces_scalars_and_lists() -> None:
+    base = {
+        "include": ["usage", "reasoning"],
+        "reasoning": {"effort": "low"},
+    }
+    updates = {
+        "include": ["reasoning"],
+        "reasoning": {"effort": "high"},
+    }
+
+    merged = deep_merge(base, updates)
+
+    assert merged["include"] == ["reasoning"]
+    assert merged["reasoning"] == {"effort": "high"}
+
+
+def test_deep_merge_does_not_mutate_inputs() -> None:
+    base = {"provider": {"order": ["a"]}}
+    updates = {"provider": {"only": ["b"]}}
+
+    merged = deep_merge(base, updates)
+
+    assert merged == {"provider": {"order": ["a"], "only": ["b"]}}
+    assert base == {"provider": {"order": ["a"]}}
+    assert updates == {"provider": {"only": ["b"]}}
 
 
 @pytest.mark.asyncio

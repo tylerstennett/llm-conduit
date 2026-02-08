@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 import pytest
@@ -20,6 +20,14 @@ from conduit.providers import BaseProvider
 from conduit.providers.ollama import OllamaProvider
 from conduit.providers.openrouter import OpenRouterProvider
 from conduit.providers.vllm import VLLMProvider
+
+
+class _SingleBodyStream(httpx.AsyncByteStream):
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self._body
 
 
 @pytest.mark.asyncio
@@ -124,6 +132,27 @@ async def test_stream_http_errors_raise_provider_errors_not_response_not_read(
                 messages=[Message(role=Role.USER, content=[TextPart(text="hi")])],
                 stream=True,
             ),
+            effective_config=provider.config,
+        ):
+            pass
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ollama_generate_stream_http_error_reads_stream_before_mapping() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            429,
+            stream=_SingleBodyStream(b'{"error":{"message":"too many requests"}}'),
+        )
+    )
+    client = httpx.AsyncClient(transport=transport)
+    provider = OllamaProvider(OllamaConfig(model="m", raw=True), http_client=client)
+
+    with pytest.raises(RateLimitError, match="too many requests"):
+        async for _ in provider.chat_stream(
+            ChatRequest(messages=[Message(role=Role.USER, content="hi")], stream=True),
             effective_config=provider.config,
         ):
             pass

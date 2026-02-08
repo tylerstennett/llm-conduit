@@ -6,6 +6,7 @@ import pytest
 
 from conduit.client import Conduit
 from conduit.config import OllamaConfig, OpenRouterConfig, VLLMConfig
+from conduit.exceptions import ConfigValidationError
 from conduit.providers import OllamaProvider, OpenRouterProvider, VLLMProvider
 
 
@@ -34,3 +35,8 @@ def test_from_env_uses_registry(monkeypatch: pytest.MonkeyPatch) -> None:
         assert isinstance(client.config, OpenRouterConfig)
     finally:
         asyncio.run(client.aclose())
+
+
+def test_from_env_rejects_unknown_provider() -> None:
+    with pytest.raises(ConfigValidationError, match="provider must be one of"):
+        Conduit.from_env("does-not-exist")
