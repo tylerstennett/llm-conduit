@@ -1,3 +1,3 @@
-from conduit.tools.schema import ToolCall, ToolDefinition, ToolResult
+from conduit.tools.schema import ToolCall, ToolDefinition
 
-__all__ = ["ToolCall", "ToolDefinition", "ToolResult"]
+__all__ = ["ToolCall", "ToolDefinition"]

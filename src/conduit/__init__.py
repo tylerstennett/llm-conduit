@@ -39,7 +39,7 @@ from conduit.models.messages import (
     UsageStats,
 )
 from conduit.retry import RetryPolicy
-from conduit.tools import ToolCall, ToolDefinition, ToolResult
+from conduit.tools import ToolCall, ToolDefinition
 
 __all__ = [
     "AuthenticationError",
@@ -75,7 +75,6 @@ __all__ = [
     "ToolCallParseError",
     "ToolDefinition",
     "ToolError",
-    "ToolResult",
     "ToolSchemaError",
     "UsageStats",
     "VLLMConfig",
