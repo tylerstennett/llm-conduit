@@ -16,6 +16,23 @@ from conduit.models.messages import (
 from conduit.providers.ollama import OllamaProvider
 from conduit.providers.openrouter import OpenRouterProvider
 from conduit.providers.vllm import VLLMProvider
+from conduit.tools.schema import ToolDefinition
+
+
+def _weather_tool(*, strict: bool | None = None) -> ToolDefinition:
+    return ToolDefinition(
+        name="get_weather",
+        description="Get weather for a location",
+        parameters={
+            "type": "object",
+            "properties": {
+                "location": {"type": "string"},
+                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+            },
+            "required": ["location"],
+        },
+        strict=strict,
+    )
 
 
 def test_vllm_request_builds_structured_outputs_from_guided_alias(
@@ -67,6 +84,22 @@ def test_vllm_rejects_stream_options_in_non_stream_mode(sample_messages) -> None
         )
 
 
+def test_vllm_rejects_strict_tool_schema(sample_messages) -> None:
+    config = VLLMConfig(model="m")
+    provider = VLLMProvider(config)
+
+    with pytest.raises(ConfigValidationError, match="does not support strict tool schemas"):
+        provider.build_request_body(
+            ChatRequest(
+                messages=sample_messages,
+                tools=[_weather_tool(strict=True)],
+                tool_choice="auto",
+            ),
+            effective_config=config,
+            stream=False,
+        )
+
+
 def test_ollama_request_places_generation_params_in_options(
     sample_messages,
     sample_tools,
@@ -92,6 +125,39 @@ def test_ollama_tool_choice_none_omits_tools(sample_messages, sample_tools) -> N
 
     body = provider.build_request_body(
         ChatRequest(messages=sample_messages, tools=sample_tools, tool_choice="none"),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert "tools" not in body
+
+
+def test_ollama_rejects_strict_tool_schema_when_tools_included(sample_messages) -> None:
+    config = OllamaConfig(model="m")
+    provider = OllamaProvider(config)
+
+    with pytest.raises(ConfigValidationError, match="does not support strict tool schemas"):
+        provider.build_request_body(
+            ChatRequest(
+                messages=sample_messages,
+                tools=[_weather_tool(strict=True)],
+                tool_choice="auto",
+            ),
+            effective_config=config,
+            stream=False,
+        )
+
+
+def test_ollama_tool_choice_none_ignores_strict_tools(sample_messages) -> None:
+    config = OllamaConfig(model="m")
+    provider = OllamaProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=sample_messages,
+            tools=[_weather_tool(strict=True)],
+            tool_choice="none",
+        ),
         effective_config=config,
         stream=False,
     )
@@ -181,6 +247,26 @@ def test_openrouter_request_includes_provider_route_and_headers(
     assert body["provider"]["order"] == ["together"]
     assert headers["HTTP-Referer"] == "https://example.com"
     assert headers["X-Title"] == "Conduit"
+
+
+def test_openrouter_request_includes_tool_strict_flag(sample_messages) -> None:
+    config = OpenRouterConfig(
+        model="openai/gpt-4o-mini",
+        api_key="secret",
+    )
+    provider = OpenRouterProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=sample_messages,
+            tools=[_weather_tool(strict=True)],
+            tool_choice="auto",
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert body["tools"][0]["function"]["strict"] is True
 
 
 def test_openrouter_request_includes_reasoning_transforms_and_include(

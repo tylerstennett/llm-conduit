@@ -67,8 +67,44 @@ print(response.content)
 - Supports passthrough `reasoning`, `transforms`, and `include`.
 - `include` and `transforms` are provider/model/endpoint dependent and may not
   be honored by every upstream route.
+- Supports tool strict mode passthrough via `ToolDefinition(strict=True)`.
 - Supports optional request-context metadata mapping via runtime override key
   `openrouter_context_metadata_fields`.
+
+## Tool strict mode
+
+Support matrix:
+
+- OpenRouter: supported (passes `tools[].function.strict` through).
+- vLLM: not supported; raises `ConfigValidationError` when any tool sets `strict=True`.
+- Ollama: not supported; raises `ConfigValidationError` when tools are included and any
+  tool sets `strict=True`.
+
+```python
+from conduit import Conduit, Message, OpenRouterConfig, Role, TextPart, ToolDefinition
+
+config = OpenRouterConfig(model="openai/gpt-4o-mini", api_key="k")
+
+tool = ToolDefinition(
+    name="get_weather",
+    description="Get weather for a location",
+    strict=True,
+    parameters={
+        "type": "object",
+        "properties": {
+            "location": {"type": "string"},
+        },
+        "required": ["location"],
+    },
+)
+
+async with Conduit(config) as client:
+    response = await client.chat(
+        messages=[Message(role=Role.USER, content=[TextPart(text="Weather in SF?")])],
+        tools=[tool],
+        tool_choice="auto",
+    )
+```
 
 ## Request context and overrides
 

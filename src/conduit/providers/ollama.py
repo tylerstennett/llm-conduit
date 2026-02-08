@@ -25,7 +25,11 @@ from conduit.models.messages import (
     ToolCallChunkAccumulator,
     UsageStats,
 )
-from conduit.providers.base import BaseProvider
+from conduit.providers.base import (
+    BaseProvider,
+    ensure_tool_strict_supported,
+    tool_definitions_to_openai,
+)
 from conduit.providers.streaming import iter_ndjson
 from conduit.providers.utils import drop_nones
 from conduit.tools.schema import ToolCall, parse_tool_arguments
@@ -246,7 +250,15 @@ class OllamaProvider(BaseProvider):
             "top_logprobs": config.top_logprobs,
         }
         if include_tools:
-            body["tools"] = [tool.to_openai_tool() for tool in request.tools or []]
+            ensure_tool_strict_supported(
+                request.tools,
+                provider_name=self.provider_name,
+                supports_tool_strict=False,
+            )
+            body["tools"] = tool_definitions_to_openai(
+                request.tools,
+                include_strict=False,
+            )
 
         return drop_nones(body)
 
