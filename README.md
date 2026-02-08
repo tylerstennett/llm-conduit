@@ -3,7 +3,7 @@
 Conduit is a provider-aware Python LLM client for vLLM, Ollama, and OpenRouter.
 
 It exposes strict typed configs, provider-specific request mapping, normalized tool calling,
-and a unified async streaming interface.
+and unified chunk and event streaming interfaces.
 
 ## Install
 
@@ -14,15 +14,18 @@ pip install -e .
 ## Quickstart
 
 ```python
-from conduit import Conduit, OllamaConfig, Message, Role
+from conduit import Conduit, OllamaConfig, Message, Role, TextPart
 
 config = OllamaConfig(model="llama3.1:8b")
 
 async with Conduit(config) as client:
     response = await client.chat(
         messages=[
-            Message(role=Role.SYSTEM, content="You are concise."),
-            Message(role=Role.USER, content="Explain gradient descent briefly."),
+            Message(role=Role.SYSTEM, content=[TextPart(text="You are concise.")]),
+            Message(
+                role=Role.USER,
+                content=[TextPart(text="Explain gradient descent briefly.")],
+            ),
         ]
     )
 
@@ -64,6 +67,32 @@ print(response.content)
 - Supports passthrough `reasoning`, `transforms`, and `include`.
 - `include` and `transforms` are provider/model/endpoint dependent and may not
   be honored by every upstream route.
+- Supports optional request-context metadata mapping via runtime override key
+  `openrouter_context_metadata_fields`.
+
+## Request context and overrides
+
+Conduit separates provider config overrides from invocation-scoped runtime fields:
+
+- `config_overrides`: strict, provider-typed request config. Unknown keys fail validation.
+- `runtime_overrides`: untyped runtime namespace. Keys are provider opt-in and are never
+  merged into provider config.
+- `context`: invocation metadata (`thread_id`, `tags`, `metadata`) for middleware/logging
+  and provider-specific mappings.
+
+By default, unknown `runtime_overrides` keys are ignored. Set
+`strict_runtime_overrides=True` on `Conduit` or `SyncConduit` to raise instead.
+
+```python
+from conduit import Conduit, Message, RequestContext, Role, TextPart, VLLMConfig
+
+client = Conduit(VLLMConfig(model="m"), strict_runtime_overrides=False)
+response = await client.chat(
+    messages=[Message(role=Role.USER, content=[TextPart(text="Say hi")])],
+    context=RequestContext(thread_id="thread-123", tags=["demo"]),
+    runtime_overrides={"ignored_by_vllm": True},
+)
+```
 
 ## Strict config overrides
 
@@ -72,10 +101,32 @@ the active provider config model. Unknown keys raise `ConfigValidationError`.
 
 ```python
 await client.chat(
-    messages=[Message(role=Role.USER, content="Say hi")],
+    messages=[Message(role=Role.USER, content=[TextPart(text="Say hi")])],
     config_overrides={"temperature": 0.1},
 )
 ```
+
+## Streaming events
+
+`chat_stream()` yields `ChatResponseChunk`.
+
+`chat_events()` yields typed `StreamEvent` values with deterministic ordering per chunk:
+
+1. `text_delta`
+2. `tool_call_delta`
+3. `tool_call_completed`
+4. `usage`
+5. `finish`
+
+On streaming errors, `chat_events()` emits one `error` event and then re-raises.
+
+## Rich message content
+
+`Message.content` supports content parts:
+
+- `TextPart(type="text", text="...")`
+- `ImageUrlPart(type="image_url", url="https://...")`
+- Provider-specific dict parts for passthrough
 
 ## from_env
 

@@ -4,7 +4,15 @@ import os
 
 import pytest
 
-from conduit import Conduit, Message, OllamaConfig, OpenRouterConfig, Role, VLLMConfig
+from conduit import (
+    Conduit,
+    Message,
+    OllamaConfig,
+    OpenRouterConfig,
+    Role,
+    TextPart,
+    VLLMConfig,
+)
 
 
 @pytest.mark.integration
@@ -17,7 +25,9 @@ async def test_vllm_live_basic_chat() -> None:
 
     config = VLLMConfig(model=model, base_url=url)
     async with Conduit(config) as client:
-        response = await client.chat(messages=[Message(role=Role.USER, content="Say hello")])
+        response = await client.chat(
+            messages=[Message(role=Role.USER, content=[TextPart(text="Say hello")])]
+        )
     assert response.content is not None or response.tool_calls is not None
 
 
@@ -31,7 +41,9 @@ async def test_ollama_live_basic_chat() -> None:
 
     config = OllamaConfig(model=model, base_url=url)
     async with Conduit(config) as client:
-        response = await client.chat(messages=[Message(role=Role.USER, content="Say hello")])
+        response = await client.chat(
+            messages=[Message(role=Role.USER, content=[TextPart(text="Say hello")])]
+        )
     assert response.content is not None or response.tool_calls is not None
 
 
@@ -47,6 +59,7 @@ async def test_openrouter_live_basic_chat() -> None:
 
     config = OpenRouterConfig(model=model, api_key=api_key)
     async with Conduit(config) as client:
-        response = await client.chat(messages=[Message(role=Role.USER, content="Say hello")])
+        response = await client.chat(
+            messages=[Message(role=Role.USER, content=[TextPart(text="Say hello")])]
+        )
     assert response.content is not None or response.tool_calls is not None
-

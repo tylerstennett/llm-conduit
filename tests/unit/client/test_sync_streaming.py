@@ -8,7 +8,13 @@ import pytest
 
 from conduit.client import SyncConduit
 from conduit.config import VLLMConfig
-from conduit.models.messages import ChatResponse, ChatResponseChunk, Message
+from conduit.models.messages import (
+    ChatResponse,
+    ChatResponseChunk,
+    Message,
+    RequestContext,
+    StreamEvent,
+)
 from conduit.tools.schema import ToolDefinition
 
 
@@ -20,8 +26,10 @@ def test_sync_chat_stream_yields_chunks_incrementally() -> None:
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, object] | None = None,
         config_overrides: dict[str, object] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, object] | None = None,
     ) -> AsyncIterator[ChatResponseChunk]:
-        del messages, tools, tool_choice, config_overrides
+        del messages, tools, tool_choice, config_overrides, context, runtime_overrides
         yield ChatResponseChunk(content="first")
         await asyncio.sleep(0.2)
         yield ChatResponseChunk(content="second")
@@ -54,8 +62,18 @@ def test_sync_chat_reuses_single_event_loop_across_calls() -> None:
         tool_choice: str | dict[str, object] | None = None,
         stream: bool = False,
         config_overrides: dict[str, object] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, object] | None = None,
     ) -> ChatResponse:
-        del messages, tools, tool_choice, stream, config_overrides
+        del (
+            messages,
+            tools,
+            tool_choice,
+            stream,
+            config_overrides,
+            context,
+            runtime_overrides,
+        )
         loop_ids.append(id(asyncio.get_running_loop()))
         return ChatResponse(content="ok")
 
@@ -82,4 +100,38 @@ def test_sync_context_manager_closes_client() -> None:
 def test_sync_close_is_idempotent() -> None:
     client = SyncConduit(VLLMConfig(model="m"))
     client.close()
+    client.close()
+
+
+def test_sync_chat_events_yields_events_incrementally() -> None:
+    client = SyncConduit(VLLMConfig(model="m"))
+
+    async def fake_chat_events(
+        messages: list[Message],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | dict[str, object] | None = None,
+        config_overrides: dict[str, object] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, object] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        del messages, tools, tool_choice, config_overrides, context, runtime_overrides
+        yield StreamEvent(type="text_delta", text="first")
+        await asyncio.sleep(0.2)
+        yield StreamEvent(type="finish", finish_reason="stop")
+
+    client._async_client.chat_events = fake_chat_events  # type: ignore[method-assign]
+
+    start = time.perf_counter()
+    stream = client.chat_events(messages=[])
+    first = next(stream)
+    elapsed = time.perf_counter() - start
+
+    assert first.type == "text_delta"
+    assert elapsed < 0.15
+
+    second = next(stream)
+    assert second.type == "finish"
+    with pytest.raises(StopIteration):
+        next(stream)
+
     client.close()

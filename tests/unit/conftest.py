@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from conduit.models.messages import Message, Role
+from conduit.models.messages import Message, Role, TextPart
 from conduit.tools.schema import ToolDefinition
 
 
 @pytest.fixture
 def sample_messages() -> list[Message]:
     return [
-        Message(role=Role.SYSTEM, content="You are helpful."),
-        Message(role=Role.USER, content="What is the weather in New York?"),
+        Message(role=Role.SYSTEM, content=[TextPart(text="You are helpful.")]),
+        Message(
+            role=Role.USER,
+            content=[TextPart(text="What is the weather in New York?")],
+        ),
     ]
 
 
@@ -30,4 +33,3 @@ def sample_tools() -> list[ToolDefinition]:
             },
         )
     ]
-

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,17 +16,47 @@ class Role(str, Enum):
     TOOL = "tool"
 
 
+class RequestContext(BaseModel):
+    """Run-scoped metadata for one invocation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TextPart(BaseModel):
+    """Text content part."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageUrlPart(BaseModel):
+    """Image URL content part."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["image_url"] = "image_url"
+    url: str
+
+
+ContentPart = TextPart | ImageUrlPart | dict[str, Any]
+
+
 class Message(BaseModel):
     """Canonical chat message."""
 
     model_config = ConfigDict(extra="forbid")
 
     role: Role
-    content: str | None = None
+    content: list[ContentPart] | None = None
     name: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
-    images: list[str] | None = None
 
 
 class UsageStats(BaseModel):
@@ -87,6 +117,73 @@ class ChatRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     stream: bool = False
     config_overrides: dict[str, Any] | None = None
+    context: RequestContext | None = None
+    runtime_overrides: dict[str, Any] | None = None
+
+
+class StreamEvent(BaseModel):
+    """Typed streaming event."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal[
+        "text_delta",
+        "tool_call_delta",
+        "tool_call_completed",
+        "usage",
+        "finish",
+        "error",
+    ]
+    text: str | None = None
+    tool_call: PartialToolCall | ToolCall | None = None
+    usage: UsageStats | None = None
+    finish_reason: str | None = None
+    error: str | None = None
+    raw: dict[str, Any] | None = None
+
+
+class StreamEventAccumulator:
+    """Reconstructs a ChatResponse from stream events."""
+
+    def __init__(self) -> None:
+        self._content_parts: list[str] = []
+        self._tool_calls: list[ToolCall] = []
+        self._finish_reason: str | None = None
+        self._usage: UsageStats | None = None
+        self._raw_response: dict[str, Any] | None = None
+        self._model: str | None = None
+
+    def ingest(self, event: StreamEvent) -> None:
+        if event.type == "text_delta" and event.text:
+            self._content_parts.append(event.text)
+
+        if event.type == "tool_call_completed" and isinstance(event.tool_call, ToolCall):
+            self._tool_calls.append(event.tool_call)
+
+        if event.type == "finish" and event.finish_reason is not None:
+            self._finish_reason = event.finish_reason
+
+        if event.type == "usage" and event.usage is not None:
+            self._usage = event.usage
+
+        if event.raw is not None:
+            self._raw_response = event.raw
+            raw_model = event.raw.get("model")
+            if isinstance(raw_model, str):
+                self._model = raw_model
+
+    def to_response(self, *, provider: str | None = None) -> ChatResponse:
+        content = "".join(self._content_parts) if self._content_parts else None
+        tool_calls = self._tool_calls if self._tool_calls else None
+        return ChatResponse(
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason=self._finish_reason,
+            usage=self._usage,
+            raw_response=self._raw_response,
+            model=self._model,
+            provider=provider,
+        )
 
 
 class ToolCallChunkAccumulator:

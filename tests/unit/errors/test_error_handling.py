@@ -15,7 +15,7 @@ from conduit.exceptions import (
     StreamError,
     ToolCallParseError,
 )
-from conduit.models.messages import ChatRequest, Message, Role
+from conduit.models.messages import ChatRequest, Message, Role, TextPart
 from conduit.providers import BaseProvider
 from conduit.providers.ollama import OllamaProvider
 from conduit.providers.openrouter import OpenRouterProvider
@@ -44,7 +44,9 @@ async def test_http_status_error_mapping() -> None:
 
         with pytest.raises(expected_type):
             await provider.chat(
-                ChatRequest(messages=[Message(role=Role.USER, content="hi")]),
+                ChatRequest(
+                    messages=[Message(role=Role.USER, content=[TextPart(text="hi")])]
+                ),
                 effective_config=provider.config,
             )
 
@@ -62,7 +64,10 @@ async def test_malformed_sse_raises_stream_error() -> None:
 
     with pytest.raises(StreamError):
         async for _ in provider.chat_stream(
-            ChatRequest(messages=[Message(role=Role.USER, content="hi")], stream=True),
+            ChatRequest(
+                messages=[Message(role=Role.USER, content=[TextPart(text="hi")])],
+                stream=True,
+            ),
             effective_config=provider.config,
         ):
             pass
@@ -77,7 +82,11 @@ def test_ollama_missing_tool_name_mapping_raises() -> None:
         provider.build_request_body(
             ChatRequest(
                 messages=[
-                    Message(role=Role.TOOL, tool_call_id="missing", content="{}"),
+                    Message(
+                        role=Role.TOOL,
+                        tool_call_id="missing",
+                        content=[TextPart(text="{}")],
+                    ),
                 ]
             ),
             effective_config=provider.config,
@@ -111,7 +120,10 @@ async def test_stream_http_errors_raise_provider_errors_not_response_not_read(
 
     with pytest.raises(RateLimitError, match="too many requests"):
         async for _ in provider.chat_stream(
-            ChatRequest(messages=[Message(role=Role.USER, content="hi")], stream=True),
+            ChatRequest(
+                messages=[Message(role=Role.USER, content=[TextPart(text="hi")])],
+                stream=True,
+            ),
             effective_config=provider.config,
         ):
             pass

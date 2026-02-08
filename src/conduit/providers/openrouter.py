@@ -7,7 +7,7 @@ import httpx
 
 from conduit.config.base import BaseLLMConfig
 from conduit.config.openrouter import OpenRouterConfig
-from conduit.exceptions import ResponseParseError, StreamError
+from conduit.exceptions import ConfigValidationError, ResponseParseError, StreamError
 from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
@@ -29,6 +29,7 @@ from conduit.providers.utils import drop_nones, extract_openai_message_content
 
 class OpenRouterProvider(BaseProvider):
     provider_name = "openrouter"
+    supported_runtime_override_keys = frozenset({"openrouter_context_metadata_fields"})
 
     def default_headers(
         self,
@@ -81,7 +82,10 @@ class OpenRouterProvider(BaseProvider):
                 else None
             ),
             "route": config.route,
-            "metadata": config.metadata,
+            "metadata": self._resolve_metadata(
+                config_metadata=config.metadata,
+                request=request,
+            ),
             "plugins": config.plugins,
             "user": config.user,
             "tools": tool_definitions_to_openai(request.tools),
@@ -89,6 +93,65 @@ class OpenRouterProvider(BaseProvider):
         }
 
         return drop_nones(body)
+
+    def _resolve_metadata(
+        self,
+        *,
+        config_metadata: dict[str, str] | None,
+        request: ChatRequest,
+    ) -> dict[str, str] | None:
+        selected_fields = self._context_metadata_fields(request.runtime_overrides)
+        if not selected_fields:
+            return config_metadata
+
+        metadata: dict[str, str] = dict(config_metadata or {})
+        context = request.context
+        if context is None:
+            return metadata or None
+
+        if "thread_id" in selected_fields and context.thread_id is not None:
+            metadata["conduit_context_thread_id"] = context.thread_id
+        if "tags" in selected_fields:
+            metadata["conduit_context_tags"] = json.dumps(
+                context.tags,
+                separators=(",", ":"),
+            )
+        if "metadata" in selected_fields:
+            metadata["conduit_context_metadata"] = json.dumps(
+                context.metadata,
+                separators=(",", ":"),
+            )
+        return metadata or None
+
+    @staticmethod
+    def _context_metadata_fields(
+        runtime_overrides: dict[str, Any] | None,
+    ) -> set[str]:
+        if not runtime_overrides:
+            return set()
+
+        raw_fields = runtime_overrides.get("openrouter_context_metadata_fields")
+        if raw_fields is None:
+            return set()
+        if not isinstance(raw_fields, list):
+            raise ConfigValidationError(
+                "openrouter_context_metadata_fields must be a list of strings"
+            )
+
+        allowed_fields = {"thread_id", "tags", "metadata"}
+        parsed: set[str] = set()
+        for raw_field in raw_fields:
+            if not isinstance(raw_field, str):
+                raise ConfigValidationError(
+                    "openrouter_context_metadata_fields must contain only strings"
+                )
+            if raw_field not in allowed_fields:
+                raise ConfigValidationError(
+                    "openrouter_context_metadata_fields entries must be one of: "
+                    "thread_id, tags, metadata"
+                )
+            parsed.add(raw_field)
+        return parsed
 
     async def chat(
         self,

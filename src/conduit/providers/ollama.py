@@ -17,9 +17,11 @@ from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
     ChatResponseChunk,
+    ImageUrlPart,
     Message,
     PartialToolCall,
     Role,
+    TextPart,
     ToolCallChunkAccumulator,
     UsageStats,
 )
@@ -334,13 +336,14 @@ def to_ollama_messages(
     output: list[dict[str, Any]] = []
 
     for message in messages:
+        content_text, images = extract_ollama_content(message)
         payload: dict[str, Any] = {
             "role": message.role.value,
-            "content": message.content or "",
+            "content": content_text,
         }
 
-        if message.images:
-            payload["images"] = message.images
+        if images:
+            payload["images"] = images
 
         if message.role is Role.ASSISTANT and message.tool_calls:
             payload["tool_calls"] = [
@@ -372,12 +375,61 @@ def to_ollama_messages(
     return output
 
 
+def extract_ollama_content(message: Message) -> tuple[str, list[str]]:
+    text_parts: list[str] = []
+    images: list[str] = []
+
+    if isinstance(message.content, list):
+        for part in message.content:
+            if isinstance(part, TextPart):
+                text_parts.append(part.text)
+                continue
+            if isinstance(part, ImageUrlPart):
+                images.append(part.url)
+                continue
+
+            part_type = part.get("type")
+            if part_type == "text":
+                text = part.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+                    continue
+            if part_type == "image_url":
+                url = extract_part_image_url(part)
+                if url is not None:
+                    images.append(url)
+                    continue
+
+            raise ConfigValidationError(
+                "Ollama only supports text and image_url content parts"
+            )
+    elif message.content is not None:
+        raise ConfigValidationError(
+            "Ollama message content must be a list of parts or None"
+        )
+
+    return "".join(text_parts), images
+
+
+def extract_part_image_url(part: dict[str, Any]) -> str | None:
+    nested = part.get("image_url")
+    if isinstance(nested, dict):
+        nested_url = nested.get("url")
+        if isinstance(nested_url, str):
+            return nested_url
+    direct_url = part.get("url")
+    if isinstance(direct_url, str):
+        return direct_url
+    return None
+
+
 def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
     system_prompt: str | None = None
     prompt: str | None = None
 
     for message in messages:
-        if message.images:
+        content_text, images = extract_ollama_content(message)
+        if images:
             raise ConfigValidationError("Ollama /api/generate does not support images")
         if message.role is Role.TOOL:
             raise ConfigValidationError("Ollama /api/generate does not support tool messages")
@@ -391,7 +443,7 @@ def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
                 raise ConfigValidationError(
                     "Ollama /api/generate supports at most one system message"
                 )
-            system_prompt = message.content or ""
+            system_prompt = content_text
             continue
 
         if message.role is Role.USER:
@@ -399,7 +451,7 @@ def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
                 raise ConfigValidationError(
                     "Ollama /api/generate supports exactly one user message"
                 )
-            prompt = message.content or ""
+            prompt = content_text
             continue
 
         raise ConfigValidationError(
