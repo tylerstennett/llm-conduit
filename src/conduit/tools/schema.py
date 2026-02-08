@@ -63,15 +63,6 @@ class ToolCall(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
-class ToolResult(BaseModel):
-    """Canonical tool result message payload."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    tool_call_id: str
-    content: str
-
-
 def parse_tool_arguments(raw_arguments: str | dict[str, Any] | None) -> dict[str, Any]:
     """Normalize provider tool argument payloads into dictionaries."""
     if raw_arguments is None:
