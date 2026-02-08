@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from conduit.config import OllamaConfig, OpenRouterConfig, OpenRouterProviderPrefs, VLLMConfig
 from conduit.exceptions import ConfigValidationError
-from conduit.models.messages import ChatRequest, Message, Role
+from conduit.models.messages import (
+    ChatRequest,
+    ImageUrlPart,
+    Message,
+    RequestContext,
+    Role,
+    TextPart,
+)
 from conduit.providers.ollama import OllamaProvider
 from conduit.providers.openrouter import OpenRouterProvider
 from conduit.providers.vllm import VLLMProvider
@@ -124,8 +132,8 @@ def test_ollama_generate_mode_rejects_multiple_user_messages() -> None:
     config = OllamaConfig(model="m", raw=True)
     provider = OllamaProvider(config)
     messages = [
-        Message(role=Role.USER, content="A"),
-        Message(role=Role.USER, content="B"),
+        Message(role=Role.USER, content=[TextPart(text="A")]),
+        Message(role=Role.USER, content=[TextPart(text="B")]),
     ]
 
     with pytest.raises(ConfigValidationError):
@@ -196,3 +204,277 @@ def test_openrouter_request_includes_reasoning_transforms_and_include(
     assert body["reasoning"] == {"effort": "medium"}
     assert body["transforms"] == ["middle-out"]
     assert body["include"] == ["reasoning"]
+
+
+def test_openrouter_request_maps_selected_context_fields_to_metadata(
+    sample_messages,
+) -> None:
+    config = OpenRouterConfig(
+        model="openai/gpt-4o-mini",
+        api_key="secret",
+        metadata={"existing": "true"},
+    )
+    provider = OpenRouterProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=sample_messages,
+            context=RequestContext(
+                thread_id="thread-1",
+                tags=["agent", "test"],
+                metadata={"trace_id": "abc123"},
+            ),
+            runtime_overrides={
+                "openrouter_context_metadata_fields": [
+                    "thread_id",
+                    "tags",
+                    "metadata",
+                ]
+            },
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert body["metadata"]["existing"] == "true"
+    assert body["metadata"]["conduit_context_thread_id"] == "thread-1"
+    assert body["metadata"]["conduit_context_tags"] == '["agent","test"]'
+    assert body["metadata"]["conduit_context_metadata"] == '{"trace_id":"abc123"}'
+
+
+def test_openrouter_request_does_not_map_context_without_runtime_opt_in(
+    sample_messages,
+) -> None:
+    config = OpenRouterConfig(
+        model="openai/gpt-4o-mini",
+        api_key="secret",
+    )
+    provider = OpenRouterProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=sample_messages,
+            context=RequestContext(thread_id="thread-1"),
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert "metadata" not in body
+
+
+def test_openrouter_context_mapping_rejects_unknown_fields(sample_messages) -> None:
+    config = OpenRouterConfig(
+        model="openai/gpt-4o-mini",
+        api_key="secret",
+    )
+    provider = OpenRouterProvider(config)
+
+    with pytest.raises(ConfigValidationError):
+        provider.build_request_body(
+            ChatRequest(
+                messages=sample_messages,
+                context=RequestContext(thread_id="thread-1"),
+                runtime_overrides={
+                    "openrouter_context_metadata_fields": ["thread_id", "unknown"]
+                },
+            ),
+            effective_config=config,
+            stream=False,
+        )
+
+
+def test_vllm_rich_content_maps_text_and_images() -> None:
+    config = VLLMConfig(model="m")
+    provider = VLLMProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=[
+                        TextPart(text="Hello"),
+                        ImageUrlPart(url="https://example.com/cat.png"),
+                    ],
+                )
+            ]
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    content = body["messages"][0]["content"]
+    assert content[0] == {"type": "text", "text": "Hello"}
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {"url": "https://example.com/cat.png"},
+    }
+
+
+def test_openrouter_rich_content_passes_unknown_dict_parts_through() -> None:
+    config = OpenRouterConfig(model="openai/gpt-4o-mini", api_key="secret")
+    provider = OpenRouterProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=[
+                        {"type": "input_audio", "input_audio": {"data": "abc"}},
+                    ],
+                )
+            ]
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert body["messages"][0]["content"] == [
+        {"type": "input_audio", "input_audio": {"data": "abc"}}
+    ]
+
+
+def test_openrouter_rich_content_preserves_image_url_nested_options() -> None:
+    config = OpenRouterConfig(model="openai/gpt-4o-mini", api_key="secret")
+    provider = OpenRouterProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=[
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "https://example.com/cat.png",
+                                "detail": "low",
+                            },
+                        },
+                    ],
+                )
+            ]
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert body["messages"][0]["content"] == [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://example.com/cat.png",
+                "detail": "low",
+            },
+        }
+    ]
+
+
+def test_message_string_content_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Message(role=Role.USER, content="Describe this image")
+
+
+def test_ollama_rich_content_maps_text_and_images() -> None:
+    config = OllamaConfig(model="m")
+    provider = OllamaProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=[
+                        TextPart(text="Hello"),
+                        ImageUrlPart(url="https://example.com/cat.png"),
+                    ],
+                )
+            ]
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert body["messages"][0]["content"] == "Hello"
+    assert body["messages"][0]["images"] == ["https://example.com/cat.png"]
+
+
+def test_ollama_rejects_unsupported_content_parts() -> None:
+    config = OllamaConfig(model="m")
+    provider = OllamaProvider(config)
+
+    with pytest.raises(ConfigValidationError, match="text and image_url"):
+        provider.build_request_body(
+            ChatRequest(
+                messages=[
+                    Message(
+                        role=Role.USER,
+                        content=[{"type": "input_audio", "input_audio": {"data": "abc"}}],
+                    )
+                ]
+            ),
+            effective_config=config,
+            stream=False,
+        )
+
+
+def test_ollama_generate_mode_rejects_image_parts() -> None:
+    config = OllamaConfig(model="m", raw=True)
+    provider = OllamaProvider(config)
+
+    with pytest.raises(ConfigValidationError, match="does not support images"):
+        provider.build_request_body(
+            ChatRequest(
+                messages=[
+                    Message(
+                        role=Role.USER,
+                        content=[ImageUrlPart(url="https://example.com/cat.png")],
+                    )
+                ]
+            ),
+            effective_config=config,
+            stream=False,
+        )
+
+
+def test_vllm_context_is_local_only(sample_messages) -> None:
+    config = VLLMConfig(model="m")
+    provider = VLLMProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=sample_messages,
+            context=RequestContext(
+                thread_id="thread-1",
+                tags=["tag-a"],
+                metadata={"trace_id": "abc123"},
+            ),
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert "metadata" not in body
+    assert body["messages"][0]["role"] == "system"
+
+
+def test_ollama_context_is_local_only(sample_messages) -> None:
+    config = OllamaConfig(model="m")
+    provider = OllamaProvider(config)
+
+    body = provider.build_request_body(
+        ChatRequest(
+            messages=sample_messages,
+            context=RequestContext(
+                thread_id="thread-1",
+                tags=["tag-a"],
+                metadata={"trace_id": "abc123"},
+            ),
+        ),
+        effective_config=config,
+        stream=False,
+    )
+
+    assert body["messages"][0]["role"] == "system"

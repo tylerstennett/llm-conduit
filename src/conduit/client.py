@@ -10,7 +10,15 @@ from pydantic import ValidationError
 
 from conduit.config import BaseLLMConfig, OllamaConfig, OpenRouterConfig, VLLMConfig
 from conduit.exceptions import ConfigValidationError
-from conduit.models.messages import ChatRequest, ChatResponse, ChatResponseChunk, Message
+from conduit.models.messages import (
+    ChatRequest,
+    ChatResponse,
+    ChatResponseChunk,
+    Message,
+    RequestContext,
+    StreamEvent,
+    StreamEventAccumulator,
+)
 from conduit.providers import BaseProvider, OllamaProvider, OpenRouterProvider, VLLMProvider
 from conduit.retry import RetryPolicy
 from conduit.tools.schema import ToolDefinition
@@ -115,10 +123,12 @@ class Conduit:
         config: BaseLLMConfig,
         retry_policy: RetryPolicy | None = None,
         timeout: float = 120.0,
+        strict_runtime_overrides: bool = False,
     ) -> None:
         self.config = config
         self.retry_policy = retry_policy
         self.timeout = timeout
+        self.strict_runtime_overrides = strict_runtime_overrides
         self._provider = self._create_provider(config)
 
     async def __aenter__(self) -> "Conduit":
@@ -137,13 +147,20 @@ class Conduit:
         tool_choice: str | dict[str, Any] | None = None,
         stream: bool = False,
         config_overrides: dict[str, Any] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, Any] | None = None,
     ) -> ChatResponse:
+        normalized_runtime_overrides = self._normalize_runtime_overrides(
+            runtime_overrides
+        )
         request = ChatRequest(
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
             stream=stream,
             config_overrides=config_overrides,
+            context=context,
+            runtime_overrides=normalized_runtime_overrides,
         )
         effective_config = self._apply_overrides(config_overrides)
 
@@ -158,42 +175,53 @@ class Conduit:
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         config_overrides: dict[str, Any] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatResponseChunk]:
+        normalized_runtime_overrides = self._normalize_runtime_overrides(
+            runtime_overrides
+        )
         request = ChatRequest(
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
             stream=True,
             config_overrides=config_overrides,
+            context=context,
+            runtime_overrides=normalized_runtime_overrides,
         )
         effective_config = self._apply_overrides(config_overrides)
 
-        if self.retry_policy is None:
-            async for chunk in self._provider.chat_stream(
-                request,
-                effective_config=effective_config,
-            ):
-                yield chunk
-            return
+        async for chunk in self._chat_stream_with_retry(request, effective_config):
+            yield chunk
 
-        attempt = 0
-        while True:
-            produced_output = False
-            try:
-                async for chunk in self._provider.chat_stream(
-                    request,
-                    effective_config=effective_config,
-                ):
-                    produced_output = True
-                    yield chunk
-                return
-            except BaseException as exc:
-                if produced_output:
-                    raise
-                attempt += 1
-                if not self.retry_policy.should_retry(exc, attempt):
-                    raise
-                await asyncio.sleep(self.retry_policy.backoff_for_attempt(attempt, exc))
+    async def chat_events(
+        self,
+        messages: list[Message],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        config_overrides: dict[str, Any] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, Any] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        normalized_runtime_overrides = self._normalize_runtime_overrides(
+            runtime_overrides
+        )
+        request = ChatRequest(
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            stream=True,
+            config_overrides=config_overrides,
+            context=context,
+            runtime_overrides=normalized_runtime_overrides,
+        )
+        effective_config = self._apply_overrides(config_overrides)
+
+        async for event in self._events_from_chunk_stream(
+            self._chat_stream_with_retry(request, effective_config)
+        ):
+            yield event
 
     @staticmethod
     def from_env(provider: str = "openrouter") -> "Conduit":
@@ -223,48 +251,126 @@ class Conduit:
                     raise
                 await asyncio.sleep(self.retry_policy.backoff_for_attempt(attempt, exc))
 
+    async def _chat_stream_with_retry(
+        self,
+        request: ChatRequest,
+        effective_config: BaseLLMConfig,
+    ) -> AsyncIterator[ChatResponseChunk]:
+        if self.retry_policy is None:
+            async for chunk in self._provider.chat_stream(
+                request,
+                effective_config=effective_config,
+            ):
+                yield chunk
+            return
+
+        attempt = 0
+        while True:
+            produced_output = False
+            try:
+                async for chunk in self._provider.chat_stream(
+                    request,
+                    effective_config=effective_config,
+                ):
+                    produced_output = True
+                    yield chunk
+                return
+            except BaseException as exc:
+                if produced_output:
+                    raise
+                attempt += 1
+                if not self.retry_policy.should_retry(exc, attempt):
+                    raise
+                await asyncio.sleep(self.retry_policy.backoff_for_attempt(attempt, exc))
+
     async def _aggregate_stream_response(
         self,
         request: ChatRequest,
         effective_config: BaseLLMConfig,
     ) -> ChatResponse:
-        content_parts: list[str] = []
-        final_tool_calls = None
-        finish_reason: str | None = None
-        usage = None
-        model: str | None = None
-        raw_response: dict[str, Any] | None = None
-
-        async for chunk in self.chat_stream(
-            messages=request.messages,
-            tools=request.tools,
-            tool_choice=request.tool_choice,
-            config_overrides=request.config_overrides,
+        accumulator = StreamEventAccumulator()
+        async for event in self._events_from_chunk_stream(
+            self._chat_stream_with_retry(request, effective_config)
         ):
-            if chunk.content:
-                content_parts.append(chunk.content)
-            if chunk.completed_tool_calls is not None:
-                final_tool_calls = chunk.completed_tool_calls
-            if chunk.finish_reason is not None:
-                finish_reason = chunk.finish_reason
-            if chunk.usage is not None:
-                usage = chunk.usage
-            if chunk.raw_chunk is not None:
-                raw_response = chunk.raw_chunk
-                chunk_model = chunk.raw_chunk.get("model")
-                if isinstance(chunk_model, str):
-                    model = chunk_model
+            accumulator.ingest(event)
+        return accumulator.to_response(provider=self._provider.provider_name)
 
-        content = "".join(content_parts) if content_parts else None
-        return ChatResponse(
-            content=content,
-            tool_calls=final_tool_calls,
-            finish_reason=finish_reason,
-            usage=usage,
-            raw_response=raw_response,
-            model=model,
-            provider=self._provider.provider_name,
-        )
+    async def _events_from_chunk_stream(
+        self,
+        chunks: AsyncIterator[ChatResponseChunk],
+    ) -> AsyncIterator[StreamEvent]:
+        try:
+            async for chunk in chunks:
+                if chunk.content:
+                    yield StreamEvent(
+                        type="text_delta",
+                        text=chunk.content,
+                        raw=chunk.raw_chunk,
+                    )
+
+                if chunk.tool_calls:
+                    for tool_call in chunk.tool_calls:
+                        yield StreamEvent(
+                            type="tool_call_delta",
+                            tool_call=tool_call,
+                            raw=chunk.raw_chunk,
+                        )
+
+                if chunk.completed_tool_calls:
+                    for tool_call in chunk.completed_tool_calls:
+                        yield StreamEvent(
+                            type="tool_call_completed",
+                            tool_call=tool_call,
+                            raw=chunk.raw_chunk,
+                        )
+
+                if chunk.usage is not None:
+                    yield StreamEvent(
+                        type="usage",
+                        usage=chunk.usage,
+                        raw=chunk.raw_chunk,
+                    )
+
+                if chunk.finish_reason is not None:
+                    yield StreamEvent(
+                        type="finish",
+                        finish_reason=chunk.finish_reason,
+                        raw=chunk.raw_chunk,
+                    )
+        except Exception as exc:
+            yield StreamEvent(
+                type="error",
+                error=str(exc),
+                raw={
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            raise
+
+    def _normalize_runtime_overrides(
+        self,
+        runtime_overrides: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if runtime_overrides is None:
+            return None
+        if not isinstance(runtime_overrides, dict):
+            raise ConfigValidationError("runtime_overrides must be a dictionary")
+
+        supported_keys = self._provider.supported_runtime_override_keys
+        unknown_keys = [key for key in runtime_overrides if key not in supported_keys]
+        if unknown_keys and self.strict_runtime_overrides:
+            unknown_keys_text = sorted(str(key) for key in unknown_keys)
+            raise ConfigValidationError(
+                "unknown runtime_overrides keys for "
+                f"{self._provider.provider_name}: {', '.join(unknown_keys_text)}"
+            )
+
+        return {
+            key: value
+            for key, value in runtime_overrides.items()
+            if key in supported_keys
+        }
 
     def _apply_overrides(self, config_overrides: dict[str, Any] | None) -> BaseLLMConfig:
         if not config_overrides:
@@ -296,11 +402,13 @@ class SyncConduit:
         config: BaseLLMConfig,
         retry_policy: RetryPolicy | None = None,
         timeout: float = 120.0,
+        strict_runtime_overrides: bool = False,
     ) -> None:
         self._async_client = Conduit(
             config=config,
             retry_policy=retry_policy,
             timeout=timeout,
+            strict_runtime_overrides=strict_runtime_overrides,
         )
         self._loop = asyncio.new_event_loop()
         self._closed = False
@@ -319,6 +427,8 @@ class SyncConduit:
         tool_choice: str | dict[str, Any] | None = None,
         stream: bool = False,
         config_overrides: dict[str, Any] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, Any] | None = None,
     ) -> ChatResponse:
         self._ensure_open()
         return self._run(
@@ -328,6 +438,8 @@ class SyncConduit:
                 tool_choice=tool_choice,
                 stream=stream,
                 config_overrides=config_overrides,
+                context=context,
+                runtime_overrides=runtime_overrides,
             )
         )
 
@@ -337,6 +449,8 @@ class SyncConduit:
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         config_overrides: dict[str, Any] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, Any] | None = None,
     ) -> Iterator[ChatResponseChunk]:
         self._ensure_open()
         self._ensure_not_running_loop()
@@ -346,6 +460,45 @@ class SyncConduit:
             tools=tools,
             tool_choice=tool_choice,
             config_overrides=config_overrides,
+            context=context,
+            runtime_overrides=runtime_overrides,
+        )
+        iterator = async_iter.__aiter__()
+
+        try:
+            while True:
+                try:
+                    chunk = self._run(iterator.__anext__())
+                except StopAsyncIteration:
+                    break
+                yield chunk
+        finally:
+            aclose = getattr(iterator, "aclose", None)
+            if callable(aclose):
+                try:
+                    self._run(aclose())
+                except RuntimeError:
+                    pass
+
+    def chat_events(
+        self,
+        messages: list[Message],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        config_overrides: dict[str, Any] | None = None,
+        context: RequestContext | None = None,
+        runtime_overrides: dict[str, Any] | None = None,
+    ) -> Iterator[StreamEvent]:
+        self._ensure_open()
+        self._ensure_not_running_loop()
+
+        async_iter = self._async_client.chat_events(
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            config_overrides=config_overrides,
+            context=context,
+            runtime_overrides=runtime_overrides,
         )
         iterator = async_iter.__aiter__()
 

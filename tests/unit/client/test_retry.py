@@ -5,7 +5,7 @@ import pytest
 
 from conduit.client import Conduit
 from conduit.config import VLLMConfig
-from conduit.models.messages import Message, Role
+from conduit.models.messages import Message, Role, TextPart
 from conduit.retry import RetryPolicy
 
 
@@ -39,7 +39,9 @@ async def test_chat_retries_on_retryable_errors() -> None:
     conduit._provider.http_client = httpx.AsyncClient(transport=transport)
     conduit._provider._client_owned = True
 
-    response = await conduit.chat(messages=[Message(role=Role.USER, content="hi")])
+    response = await conduit.chat(
+        messages=[Message(role=Role.USER, content=[TextPart(text="hi")])]
+    )
 
     assert response.content == "ok"
     assert call_count == 2
@@ -87,7 +89,9 @@ async def test_chat_retry_honors_retry_after_header(monkeypatch: pytest.MonkeyPa
     conduit._provider.http_client = httpx.AsyncClient(transport=transport)
     conduit._provider._client_owned = True
 
-    response = await conduit.chat(messages=[Message(role=Role.USER, content="hi")])
+    response = await conduit.chat(
+        messages=[Message(role=Role.USER, content=[TextPart(text="hi")])]
+    )
 
     assert response.content == "ok"
     assert call_count == 2

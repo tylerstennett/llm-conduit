@@ -5,7 +5,7 @@ import pytest
 
 from conduit.config import OllamaConfig, OpenRouterConfig, VLLMConfig
 from conduit.exceptions import ResponseParseError
-from conduit.models.messages import ChatRequest, Message, Role
+from conduit.models.messages import ChatRequest, Message, Role, TextPart
 from conduit.providers.ollama import OllamaProvider
 from conduit.providers.openrouter import OpenRouterProvider
 from conduit.providers.vllm import VLLMProvider
@@ -188,7 +188,7 @@ def test_ollama_round_trip_tool_name_mapping(sample_tools) -> None:
     tool_result_message = Message(
         role=Role.TOOL,
         tool_call_id="call_abc",
-        content="{\"temp\": 72}",
+        content=[TextPart(text="{\"temp\": 72}")],
     )
 
     provider = OllamaProvider(OllamaConfig(model="qwen3"))

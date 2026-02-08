@@ -16,7 +16,16 @@ from conduit.exceptions import (
     ProviderUnavailableError,
     RateLimitError,
 )
-from conduit.models.messages import ChatRequest, ChatResponse, ChatResponseChunk, Message, Role, UsageStats
+from conduit.models.messages import (
+    ChatRequest,
+    ChatResponse,
+    ChatResponseChunk,
+    ImageUrlPart,
+    Message,
+    Role,
+    TextPart,
+    UsageStats,
+)
 from conduit.tools.schema import ToolCall, ToolDefinition, parse_tool_arguments
 
 
@@ -24,6 +33,7 @@ class BaseProvider(ABC):
     """Base provider abstraction."""
 
     provider_name: str
+    supported_runtime_override_keys: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -255,24 +265,9 @@ def to_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
         if message.name:
             payload["name"] = message.name
 
-        if message.content is not None:
-            payload["content"] = message.content
-
-        if message.images:
-            if message.content is None:
-                payload["content"] = ""
-            if isinstance(payload["content"], str):
-                content_items: list[dict[str, Any]] = []
-                if payload["content"]:
-                    content_items.append({"type": "text", "text": payload["content"]})
-                for image in message.images:
-                    content_items.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image},
-                        }
-                    )
-                payload["content"] = content_items
+        content = to_openai_message_content(message)
+        if content is not None:
+            payload["content"] = content
 
         if message.tool_calls:
             payload["tool_calls"] = [
@@ -291,6 +286,51 @@ def to_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
             payload["tool_call_id"] = message.tool_call_id
 
         output.append(payload)
+    return output
+
+
+def to_openai_message_content(message: Message) -> list[dict[str, Any]] | None:
+    content_items = _serialize_openai_content_parts(message.content)
+    if content_items:
+        return content_items
+    return None
+
+
+def _serialize_openai_content_parts(
+    parts: list[TextPart | ImageUrlPart | dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not parts:
+        return []
+
+    output: list[dict[str, Any]] = []
+    for part in parts:
+        if isinstance(part, TextPart):
+            output.append({"type": "text", "text": part.text})
+            continue
+        if isinstance(part, ImageUrlPart):
+            output.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": part.url},
+                }
+            )
+            continue
+
+        part_type = part.get("type")
+        if part_type == "text":
+            text = part.get("text")
+            if isinstance(text, str):
+                output.append(dict(part))
+                continue
+        if part_type == "image_url":
+            image_url = part.get("image_url")
+            if isinstance(image_url, dict):
+                nested_url = image_url.get("url")
+                if isinstance(nested_url, str):
+                    output.append(dict(part))
+                    continue
+
+        output.append(part)
     return output
 
 
