@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -79,72 +78,13 @@ class VLLMConfig(BaseLLMConfig):
 
     structured_outputs: VLLMStructuredOutputs | None = None
 
-    guided_json: dict[str, Any] | str | None = None
-    guided_regex: str | None = None
-    guided_choice: list[str] | None = None
-    guided_grammar: str | None = None
-
     @model_validator(mode="after")
-    def validate_guided_aliases(self) -> "VLLMConfig":
-        alias_count = sum(
-            [
-                self.guided_json is not None,
-                self.guided_regex is not None,
-                self.guided_choice is not None,
-                self.guided_grammar is not None,
-            ]
-        )
-        if alias_count > 1:
-            raise ValueError("guided_* fields are mutually exclusive")
-
-        if self.structured_outputs is not None and alias_count > 0:
-            raise ValueError(
-                "cannot set structured_outputs together with guided_* aliases"
-            )
+    def validate_exclusive_fields(self) -> "VLLMConfig":
         if self.continue_final_message and self.add_generation_prompt:
             raise ValueError(
                 "continue_final_message and add_generation_prompt cannot both be true"
             )
         return self
-
-    def merged_structured_outputs(self) -> VLLMStructuredOutputs | None:
-        """Return structured outputs with guided alias mapping and warnings."""
-        if self.structured_outputs is not None:
-            return self.structured_outputs
-
-        if self.guided_json is not None:
-            warnings.warn(
-                "guided_json is deprecated; use structured_outputs.json",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return VLLMStructuredOutputs(json_schema=self.guided_json)
-
-        if self.guided_regex is not None:
-            warnings.warn(
-                "guided_regex is deprecated; use structured_outputs.regex",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return VLLMStructuredOutputs(regex=self.guided_regex)
-
-        if self.guided_choice is not None:
-            warnings.warn(
-                "guided_choice is deprecated; use structured_outputs.choice",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return VLLMStructuredOutputs(choice=self.guided_choice)
-
-        if self.guided_grammar is not None:
-            warnings.warn(
-                "guided_grammar is deprecated; use structured_outputs.grammar",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return VLLMStructuredOutputs(grammar=self.guided_grammar)
-
-        return None
 
 
 class VLLMServerConfig(BaseModel):

@@ -52,19 +52,6 @@ def test_ollama_accepts_raw_and_suffix() -> None:
     assert config.suffix == " tail"
 
 
-def test_vllm_guided_aliases_are_mutually_exclusive() -> None:
-    with pytest.raises(ValidationError):
-        VLLMConfig(model="m", guided_json={"type": "object"}, guided_regex="foo")
-
-
-def test_vllm_structured_outputs_and_guided_alias_conflict() -> None:
-    with pytest.raises(ValidationError):
-        VLLMConfig(
-            model="m",
-            structured_outputs=VLLMStructuredOutputs(regex="foo"),
-            guided_json={"type": "object"},
-        )
-
 
 def test_vllm_structured_outputs_constraints_are_exclusive() -> None:
     with pytest.raises(ValidationError):

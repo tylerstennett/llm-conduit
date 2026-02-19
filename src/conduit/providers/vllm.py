@@ -1,22 +1,21 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator
 
 import httpx
 
-from conduit.config.base import BaseLLMConfig
 from conduit.config.vllm import VLLMConfig
 from conduit.exceptions import ConfigValidationError, ResponseParseError, StreamError
 from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
     ChatResponseChunk,
-    ToolCallChunkAccumulator,
 )
-from conduit.providers.base import (
-    BaseProvider,
+from conduit.providers.base import BaseProvider
+from conduit.providers.openai_format import (
     ensure_tool_strict_supported,
+    extract_openai_message_content,
     normalize_stop,
     parse_openai_tool_calls,
     parse_usage,
@@ -24,22 +23,25 @@ from conduit.providers.base import (
     tool_choice_to_openai_payload,
     tool_definitions_to_openai,
 )
-from conduit.providers.streaming import iter_sse_data, parse_openai_stream_tool_calls
-from conduit.providers.utils import drop_nones, extract_openai_message_content
+from conduit.providers.streaming import (
+    ToolCallChunkAccumulator,
+    iter_sse_data,
+    parse_openai_stream_tool_calls,
+)
+from conduit.providers.utils import drop_nones
 from conduit.utils.streaming import should_complete_tool_calls, should_emit_stream_chunk
 
 
-class VLLMProvider(BaseProvider):
+class VLLMProvider(BaseProvider[VLLMConfig]):
     provider_name = "vllm"
 
     def build_request_body(
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: VLLMConfig,
         stream: bool,
     ) -> dict[str, Any]:
-        config = cast(VLLMConfig, effective_config)
         ensure_tool_strict_supported(
             request.tools,
             provider_name=self.provider_name,
@@ -47,52 +49,51 @@ class VLLMProvider(BaseProvider):
         )
 
         body: dict[str, Any] = {
-            "model": config.model,
+            "model": effective_config.model,
             "messages": to_openai_messages(request.messages),
             "stream": stream,
-            "temperature": config.temperature,
-            "max_tokens": config.max_tokens,
-            "max_completion_tokens": config.max_completion_tokens,
-            "response_format": config.response_format,
-            "top_p": config.top_p,
-            "stop": normalize_stop(config.stop),
-            "seed": config.seed,
-            "frequency_penalty": config.frequency_penalty,
-            "presence_penalty": config.presence_penalty,
-            "n": config.n,
-            "logprobs": config.logprobs,
-            "top_logprobs": config.top_logprobs,
+            "temperature": effective_config.temperature,
+            "max_tokens": effective_config.max_tokens,
+            "max_completion_tokens": effective_config.max_completion_tokens,
+            "response_format": effective_config.response_format,
+            "top_p": effective_config.top_p,
+            "stop": normalize_stop(effective_config.stop),
+            "seed": effective_config.seed,
+            "frequency_penalty": effective_config.frequency_penalty,
+            "presence_penalty": effective_config.presence_penalty,
+            "n": effective_config.n,
+            "logprobs": effective_config.logprobs,
+            "top_logprobs": effective_config.top_logprobs,
             "tools": tool_definitions_to_openai(request.tools),
             "tool_choice": tool_choice_to_openai_payload(request.tool_choice),
-            "parallel_tool_calls": config.parallel_tool_calls,
-            "use_beam_search": config.use_beam_search,
-            "top_k": config.top_k,
-            "min_p": config.min_p,
-            "repetition_penalty": config.repetition_penalty,
-            "length_penalty": config.length_penalty,
-            "stop_token_ids": config.stop_token_ids,
-            "include_stop_str_in_output": config.include_stop_str_in_output,
-            "ignore_eos": config.ignore_eos,
-            "min_tokens": config.min_tokens,
-            "truncate_prompt_tokens": config.truncate_prompt_tokens,
-            "prompt_logprobs": config.prompt_logprobs,
-            "echo": config.echo,
-            "add_generation_prompt": config.add_generation_prompt,
-            "continue_final_message": config.continue_final_message,
-            "chat_template": config.chat_template,
-            "chat_template_kwargs": config.chat_template_kwargs,
+            "parallel_tool_calls": effective_config.parallel_tool_calls,
+            "use_beam_search": effective_config.use_beam_search,
+            "top_k": effective_config.top_k,
+            "min_p": effective_config.min_p,
+            "repetition_penalty": effective_config.repetition_penalty,
+            "length_penalty": effective_config.length_penalty,
+            "stop_token_ids": effective_config.stop_token_ids,
+            "include_stop_str_in_output": effective_config.include_stop_str_in_output,
+            "ignore_eos": effective_config.ignore_eos,
+            "min_tokens": effective_config.min_tokens,
+            "truncate_prompt_tokens": effective_config.truncate_prompt_tokens,
+            "prompt_logprobs": effective_config.prompt_logprobs,
+            "echo": effective_config.echo,
+            "add_generation_prompt": effective_config.add_generation_prompt,
+            "continue_final_message": effective_config.continue_final_message,
+            "chat_template": effective_config.chat_template,
+            "chat_template_kwargs": effective_config.chat_template_kwargs,
         }
 
-        if config.stream_options is not None:
+        if effective_config.stream_options is not None:
             if not stream:
                 raise ConfigValidationError(
                     "vLLM stream_options is only supported when stream=True"
                 )
-            body["stream_options"] = config.stream_options
+            body["stream_options"] = effective_config.stream_options
 
-        structured_outputs = config.merged_structured_outputs()
-        if structured_outputs is not None:
-            body["structured_outputs"] = structured_outputs.model_dump(
+        if effective_config.structured_outputs is not None:
+            body["structured_outputs"] = effective_config.structured_outputs.model_dump(
                 exclude_none=True,
                 by_alias=True,
             )
@@ -103,7 +104,7 @@ class VLLMProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: VLLMConfig,
     ) -> ChatResponse:
         payload = self.build_request_body(
             request,
@@ -142,7 +143,7 @@ class VLLMProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: VLLMConfig,
     ) -> AsyncIterator[ChatResponseChunk]:
         payload = self.build_request_body(
             request,
@@ -152,6 +153,11 @@ class VLLMProvider(BaseProvider):
         headers = self.default_headers(effective_config=effective_config)
         url = self.make_url("/chat/completions", effective_config=effective_config)
 
+        # Tool-call completion state machine:
+        # - accumulator: reassembles streamed tool-call fragments into complete calls
+        # - saw_tool_call_delta: tracks whether any tool-call delta appeared in the stream
+        # - allow_terminal_tool_call_flush: gate that disables the terminal flush when
+        #   should_complete_tool_calls() returns False (e.g. finish_reason="length")
         accumulator = ToolCallChunkAccumulator()
         emitted_completed_tool_calls = False
         saw_tool_call_delta = False

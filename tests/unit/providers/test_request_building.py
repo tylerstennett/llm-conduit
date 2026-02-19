@@ -8,11 +8,13 @@ from conduit.exceptions import ConfigValidationError
 from conduit.models.messages import (
     ChatRequest,
     ImageUrlPart,
+    InputAudioPart,
     Message,
     RequestContext,
     Role,
     TextPart,
 )
+from conduit.models.messages import InputAudio
 from conduit.providers.ollama import OllamaProvider
 from conduit.providers.openrouter import OpenRouterProvider
 from conduit.providers.vllm import VLLMProvider
@@ -34,29 +36,6 @@ def _weather_tool(*, strict: bool | None = None) -> ToolDefinition:
         strict=strict,
     )
 
-
-def test_vllm_request_builds_structured_outputs_from_guided_alias(
-    sample_messages,
-    sample_tools,
-) -> None:
-    config = VLLMConfig(
-        model="m",
-        guided_regex="[0-9]+",
-        top_k=50,
-        response_format={"type": "json_object"},
-    )
-    provider = VLLMProvider(config)
-
-    body = provider.build_request_body(
-        ChatRequest(messages=sample_messages, tools=sample_tools, tool_choice="auto"),
-        effective_config=config,
-        stream=False,
-    )
-
-    assert body["structured_outputs"]["regex"] == "[0-9]+"
-    assert body["top_k"] == 50
-    assert body["response_format"] == {"type": "json_object"}
-    assert body["tools"][0]["type"] == "function"
 
 
 def test_vllm_stream_request_includes_stream_options(sample_messages) -> None:
@@ -398,7 +377,7 @@ def test_vllm_rich_content_maps_text_and_images() -> None:
     }
 
 
-def test_openrouter_rich_content_passes_unknown_dict_parts_through() -> None:
+def test_openrouter_rich_content_serializes_input_audio_parts() -> None:
     config = OpenRouterConfig(model="openai/gpt-4o-mini", api_key="secret")
     provider = OpenRouterProvider(config)
 
@@ -408,7 +387,7 @@ def test_openrouter_rich_content_passes_unknown_dict_parts_through() -> None:
                 Message(
                     role=Role.USER,
                     content=[
-                        {"type": "input_audio", "input_audio": {"data": "abc"}},
+                        InputAudioPart(input_audio=InputAudio(data="abc")),
                     ],
                 )
             ]
@@ -422,7 +401,7 @@ def test_openrouter_rich_content_passes_unknown_dict_parts_through() -> None:
     ]
 
 
-def test_openrouter_rich_content_preserves_image_url_nested_options() -> None:
+def test_openrouter_rich_content_serializes_input_audio_with_format() -> None:
     config = OpenRouterConfig(model="openai/gpt-4o-mini", api_key="secret")
     provider = OpenRouterProvider(config)
 
@@ -432,13 +411,9 @@ def test_openrouter_rich_content_preserves_image_url_nested_options() -> None:
                 Message(
                     role=Role.USER,
                     content=[
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": "https://example.com/cat.png",
-                                "detail": "low",
-                            },
-                        },
+                        InputAudioPart(
+                            input_audio=InputAudio(data="abc", format="wav"),
+                        ),
                     ],
                 )
             ]
@@ -449,10 +424,10 @@ def test_openrouter_rich_content_preserves_image_url_nested_options() -> None:
 
     assert body["messages"][0]["content"] == [
         {
-            "type": "image_url",
-            "image_url": {
-                "url": "https://example.com/cat.png",
-                "detail": "low",
+            "type": "input_audio",
+            "input_audio": {
+                "data": "abc",
+                "format": "wav",
             },
         }
     ]
@@ -491,13 +466,13 @@ def test_ollama_rejects_unsupported_content_parts() -> None:
     config = OllamaConfig(model="m")
     provider = OllamaProvider(config)
 
-    with pytest.raises(ConfigValidationError, match="text and image_url"):
+    with pytest.raises(ConfigValidationError, match="input_audio"):
         provider.build_request_body(
             ChatRequest(
                 messages=[
                     Message(
                         role=Role.USER,
-                        content=[{"type": "input_audio", "input_audio": {"data": "abc"}}],
+                        content=[InputAudioPart(input_audio=InputAudio(data="abc"))],
                     )
                 ]
             ),

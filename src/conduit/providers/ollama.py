@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator
 
 import httpx
 
-from conduit.config.base import BaseLLMConfig
 from conduit.config.ollama import OllamaConfig
 from conduit.exceptions import (
     ConfigValidationError,
@@ -18,44 +17,43 @@ from conduit.models.messages import (
     ChatResponse,
     ChatResponseChunk,
     ImageUrlPart,
+    InputAudioPart,
     Message,
     PartialToolCall,
     Role,
     TextPart,
-    ToolCallChunkAccumulator,
     UsageStats,
 )
-from conduit.providers.base import (
-    BaseProvider,
+from conduit.providers.base import BaseProvider
+from conduit.providers.openai_format import (
     ensure_tool_strict_supported,
     tool_definitions_to_openai,
 )
-from conduit.providers.streaming import iter_ndjson
+from conduit.providers.streaming import ToolCallChunkAccumulator, iter_ndjson
 from conduit.providers.utils import drop_nones
 from conduit.tools.schema import ToolCall, parse_tool_arguments
 from conduit.utils.streaming import should_emit_stream_chunk
 
 
-class OllamaProvider(BaseProvider):
+class OllamaProvider(BaseProvider[OllamaConfig]):
     provider_name = "ollama"
 
     def build_request_body(
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OllamaConfig,
         stream: bool,
     ) -> dict[str, Any]:
-        config = cast(OllamaConfig, effective_config)
-        if self._use_generate_endpoint(config):
+        if self._use_generate_endpoint(effective_config):
             return self._build_generate_request_body(
                 request,
-                config=config,
+                config=effective_config,
                 stream=stream,
             )
         return self._build_chat_request_body(
             request,
-            config=config,
+            config=effective_config,
             stream=stream,
         )
 
@@ -63,15 +61,14 @@ class OllamaProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OllamaConfig,
     ) -> ChatResponse:
-        config = cast(OllamaConfig, effective_config)
         payload = self.build_request_body(
             request,
             effective_config=effective_config,
             stream=False,
         )
-        endpoint = "/api/generate" if self._use_generate_endpoint(config) else "/api/chat"
+        endpoint = "/api/generate" if self._use_generate_endpoint(effective_config) else "/api/chat"
         raw = await self.post_json(
             endpoint,
             payload,
@@ -110,16 +107,15 @@ class OllamaProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OllamaConfig,
     ) -> AsyncIterator[ChatResponseChunk]:
-        config = cast(OllamaConfig, effective_config)
         payload = self.build_request_body(
             request,
             effective_config=effective_config,
             stream=True,
         )
         headers = self.default_headers(effective_config=effective_config)
-        endpoint = "/api/generate" if self._use_generate_endpoint(config) else "/api/chat"
+        endpoint = "/api/generate" if self._use_generate_endpoint(effective_config) else "/api/chat"
         url = self.make_url(endpoint, effective_config=effective_config)
         if endpoint == "/api/generate":
             try:
@@ -385,44 +381,18 @@ def extract_ollama_content(message: Message) -> tuple[str, list[str]]:
         for part in message.content:
             if isinstance(part, TextPart):
                 text_parts.append(part.text)
-                continue
-            if isinstance(part, ImageUrlPart):
+            elif isinstance(part, ImageUrlPart):
                 images.append(part.url)
-                continue
-
-            part_type = part.get("type")
-            if part_type == "text":
-                text = part.get("text")
-                if isinstance(text, str):
-                    text_parts.append(text)
-                    continue
-            if part_type == "image_url":
-                url = extract_part_image_url(part)
-                if url is not None:
-                    images.append(url)
-                    continue
-
-            raise ConfigValidationError(
-                "Ollama only supports text and image_url content parts"
-            )
+            elif isinstance(part, InputAudioPart):
+                raise ConfigValidationError(
+                    "Ollama does not support input_audio content parts"
+                )
     elif message.content is not None:
         raise ConfigValidationError(
             "Ollama message content must be a list of parts or None"
         )
 
     return "".join(text_parts), images
-
-
-def extract_part_image_url(part: dict[str, Any]) -> str | None:
-    nested = part.get("image_url")
-    if isinstance(nested, dict):
-        nested_url = nested.get("url")
-        if isinstance(nested_url, str):
-            return nested_url
-    direct_url = part.get("url")
-    if isinstance(direct_url, str):
-        return direct_url
-    return None
 
 
 def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
