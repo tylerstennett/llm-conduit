@@ -1,4 +1,4 @@
-# llm-conduit
+# conduit
 
 Conduit is a provider-aware Python LLM client for vLLM, Ollama, and OpenRouter.
 

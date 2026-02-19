@@ -3,7 +3,7 @@ requires = ["hatchling>=1.24.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "llm-conduit"
+name = "conduit"
 version = "0.1.0"
 description = "Provider-aware Python LLM client for vLLM, Ollama, and OpenRouter"
 readme = "README.md"

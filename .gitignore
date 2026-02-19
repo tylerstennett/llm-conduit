@@ -211,3 +211,9 @@ __marimo__/
 .claude/
 AGENTS.md
 CLAUDE.md
+
+# Generated docs
+docs/
+
+# Local reference
+overview.html
