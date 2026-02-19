@@ -35,29 +35,6 @@ def _weather_tool(*, strict: bool | None = None) -> ToolDefinition:
     )
 
 
-def test_vllm_request_builds_structured_outputs_from_guided_alias(
-    sample_messages,
-    sample_tools,
-) -> None:
-    config = VLLMConfig(
-        model="m",
-        guided_regex="[0-9]+",
-        top_k=50,
-        response_format={"type": "json_object"},
-    )
-    provider = VLLMProvider(config)
-
-    body = provider.build_request_body(
-        ChatRequest(messages=sample_messages, tools=sample_tools, tool_choice="auto"),
-        effective_config=config,
-        stream=False,
-    )
-
-    assert body["structured_outputs"]["regex"] == "[0-9]+"
-    assert body["top_k"] == 50
-    assert body["response_format"] == {"type": "json_object"}
-    assert body["tools"][0]["type"] == "function"
-
 
 def test_vllm_stream_request_includes_stream_options(sample_messages) -> None:
     config = VLLMConfig(model="m", stream_options={"include_usage": True})

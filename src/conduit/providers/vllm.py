@@ -94,9 +94,8 @@ class VLLMProvider(BaseProvider):
                 )
             body["stream_options"] = config.stream_options
 
-        structured_outputs = config.merged_structured_outputs()
-        if structured_outputs is not None:
-            body["structured_outputs"] = structured_outputs.model_dump(
+        if config.structured_outputs is not None:
+            body["structured_outputs"] = config.structured_outputs.model_dump(
                 exclude_none=True,
                 by_alias=True,
             )
