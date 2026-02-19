@@ -25,8 +25,8 @@ from conduit.models.messages import (
     ToolCallChunkAccumulator,
     UsageStats,
 )
-from conduit.providers.base import (
-    BaseProvider,
+from conduit.providers.base import BaseProvider
+from conduit.providers.openai_format import (
     ensure_tool_strict_supported,
     tool_definitions_to_openai,
 )
