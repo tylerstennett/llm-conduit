@@ -22,7 +22,6 @@ from conduit.models.messages import (
     PartialToolCall,
     Role,
     TextPart,
-    ToolCallChunkAccumulator,
     UsageStats,
 )
 from conduit.providers.base import BaseProvider
@@ -30,7 +29,7 @@ from conduit.providers.openai_format import (
     ensure_tool_strict_supported,
     tool_definitions_to_openai,
 )
-from conduit.providers.streaming import iter_ndjson
+from conduit.providers.streaming import ToolCallChunkAccumulator, iter_ndjson
 from conduit.providers.utils import drop_nones
 from conduit.tools.schema import ToolCall, parse_tool_arguments
 from conduit.utils.streaming import should_emit_stream_chunk

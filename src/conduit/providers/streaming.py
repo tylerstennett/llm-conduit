@@ -7,6 +7,7 @@ import httpx
 
 from conduit.exceptions import StreamError
 from conduit.models.messages import PartialToolCall
+from conduit.tools.schema import ToolCall
 
 
 async def iter_sse_data(response: httpx.Response) -> AsyncIterator[str]:
@@ -83,4 +84,43 @@ def parse_openai_stream_tool_calls(
         )
 
     return partials or None
+
+
+class ToolCallChunkAccumulator:
+    """Assembles streamed OpenAI-style tool call fragments."""
+
+    def __init__(self) -> None:
+        self._items: dict[int, dict[str, Any]] = {}
+
+    def ingest(self, partial: PartialToolCall) -> None:
+        item = self._items.setdefault(
+            partial.index,
+            {"id": None, "name": None, "arguments_parts": []},
+        )
+        if partial.id:
+            item["id"] = partial.id
+        if partial.name:
+            item["name"] = partial.name
+        if partial.arguments_fragment:
+            item["arguments_parts"].append(partial.arguments_fragment)
+
+    def completed_calls(self) -> list[ToolCall]:
+        calls: list[ToolCall] = []
+        for index in sorted(self._items):
+            entry = self._items[index]
+            call_id = entry["id"] or f"call_{index}"
+            name = entry["name"] or ""
+            if not name:
+                continue
+            arguments_text = "".join(entry["arguments_parts"])
+            if not arguments_text.strip():
+                arguments: dict[str, Any] = {}
+            else:
+                try:
+                    parsed = json.loads(arguments_text)
+                except json.JSONDecodeError:
+                    parsed = {}
+                arguments = parsed if isinstance(parsed, dict) else {}
+            calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
+        return calls
 

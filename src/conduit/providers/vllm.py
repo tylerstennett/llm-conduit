@@ -12,7 +12,6 @@ from conduit.models.messages import (
     ChatRequest,
     ChatResponse,
     ChatResponseChunk,
-    ToolCallChunkAccumulator,
 )
 from conduit.providers.base import BaseProvider
 from conduit.providers.openai_format import (
@@ -25,7 +24,11 @@ from conduit.providers.openai_format import (
     tool_choice_to_openai_payload,
     tool_definitions_to_openai,
 )
-from conduit.providers.streaming import iter_sse_data, parse_openai_stream_tool_calls
+from conduit.providers.streaming import (
+    ToolCallChunkAccumulator,
+    iter_sse_data,
+    parse_openai_stream_tool_calls,
+)
 from conduit.providers.utils import drop_nones
 from conduit.utils.streaming import should_complete_tool_calls, should_emit_stream_chunk
 
