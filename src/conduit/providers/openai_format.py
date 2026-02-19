@@ -4,7 +4,15 @@ import json
 from typing import Any
 
 from conduit.exceptions import ConfigValidationError
-from conduit.models.messages import ImageUrlPart, Message, Role, TextPart, UsageStats
+from conduit.models.messages import (
+    ContentPart,
+    ImageUrlPart,
+    InputAudioPart,
+    Message,
+    Role,
+    TextPart,
+    UsageStats,
+)
 from conduit.tools.schema import ToolCall, ToolDefinition, parse_tool_arguments
 
 
@@ -71,7 +79,7 @@ def to_openai_message_content(message: Message) -> list[dict[str, Any]] | None:
 
 
 def _serialize_openai_content_parts(
-    parts: list[TextPart | ImageUrlPart | dict[str, Any]] | None,
+    parts: list[ContentPart] | None,
 ) -> list[dict[str, Any]]:
     if not parts:
         return []
@@ -80,31 +88,21 @@ def _serialize_openai_content_parts(
     for part in parts:
         if isinstance(part, TextPart):
             output.append({"type": "text", "text": part.text})
-            continue
-        if isinstance(part, ImageUrlPart):
+        elif isinstance(part, ImageUrlPart):
             output.append(
                 {
                     "type": "image_url",
                     "image_url": {"url": part.url},
                 }
             )
-            continue
-
-        part_type = part.get("type")
-        if part_type == "text":
-            text = part.get("text")
-            if isinstance(text, str):
-                output.append(dict(part))
-                continue
-        if part_type == "image_url":
-            image_url = part.get("image_url")
-            if isinstance(image_url, dict):
-                nested_url = image_url.get("url")
-                if isinstance(nested_url, str):
-                    output.append(dict(part))
-                    continue
-
-        output.append(part)
+        elif isinstance(part, InputAudioPart):
+            serialized: dict[str, Any] = {
+                "type": "input_audio",
+                "input_audio": {"data": part.input_audio.data},
+            }
+            if part.input_audio.format is not None:
+                serialized["input_audio"]["format"] = part.input_audio.format
+            output.append(serialized)
     return output
 
 

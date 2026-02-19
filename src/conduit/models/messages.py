@@ -43,7 +43,25 @@ class ImageUrlPart(BaseModel):
     url: str
 
 
-ContentPart = TextPart | ImageUrlPart | dict[str, Any]
+class InputAudio(BaseModel):
+    """Audio data payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data: str
+    format: str | None = None
+
+
+class InputAudioPart(BaseModel):
+    """Input audio content part."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["input_audio"] = "input_audio"
+    input_audio: InputAudio
+
+
+ContentPart = TextPart | ImageUrlPart | InputAudioPart
 
 
 class Message(BaseModel):

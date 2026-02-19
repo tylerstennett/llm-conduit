@@ -17,6 +17,7 @@ from conduit.models.messages import (
     ChatResponse,
     ChatResponseChunk,
     ImageUrlPart,
+    InputAudioPart,
     Message,
     PartialToolCall,
     Role,
@@ -380,44 +381,18 @@ def extract_ollama_content(message: Message) -> tuple[str, list[str]]:
         for part in message.content:
             if isinstance(part, TextPart):
                 text_parts.append(part.text)
-                continue
-            if isinstance(part, ImageUrlPart):
+            elif isinstance(part, ImageUrlPart):
                 images.append(part.url)
-                continue
-
-            part_type = part.get("type")
-            if part_type == "text":
-                text = part.get("text")
-                if isinstance(text, str):
-                    text_parts.append(text)
-                    continue
-            if part_type == "image_url":
-                url = extract_part_image_url(part)
-                if url is not None:
-                    images.append(url)
-                    continue
-
-            raise ConfigValidationError(
-                "Ollama only supports text and image_url content parts"
-            )
+            elif isinstance(part, InputAudioPart):
+                raise ConfigValidationError(
+                    "Ollama does not support input_audio content parts"
+                )
     elif message.content is not None:
         raise ConfigValidationError(
             "Ollama message content must be a list of parts or None"
         )
 
     return "".join(text_parts), images
-
-
-def extract_part_image_url(part: dict[str, Any]) -> str | None:
-    nested = part.get("image_url")
-    if isinstance(nested, dict):
-        nested_url = nested.get("url")
-        if isinstance(nested_url, str):
-            return nested_url
-    direct_url = part.get("url")
-    if isinstance(direct_url, str):
-        return direct_url
-    return None
 
 
 def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
