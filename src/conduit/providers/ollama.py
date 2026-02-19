@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator
 
 import httpx
 
-from conduit.config.base import BaseLLMConfig
 from conduit.config.ollama import OllamaConfig
 from conduit.exceptions import (
     ConfigValidationError,
@@ -35,26 +34,25 @@ from conduit.tools.schema import ToolCall, parse_tool_arguments
 from conduit.utils.streaming import should_emit_stream_chunk
 
 
-class OllamaProvider(BaseProvider):
+class OllamaProvider(BaseProvider[OllamaConfig]):
     provider_name = "ollama"
 
     def build_request_body(
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OllamaConfig,
         stream: bool,
     ) -> dict[str, Any]:
-        config = cast(OllamaConfig, effective_config)
-        if self._use_generate_endpoint(config):
+        if self._use_generate_endpoint(effective_config):
             return self._build_generate_request_body(
                 request,
-                config=config,
+                config=effective_config,
                 stream=stream,
             )
         return self._build_chat_request_body(
             request,
-            config=config,
+            config=effective_config,
             stream=stream,
         )
 
@@ -62,15 +60,14 @@ class OllamaProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OllamaConfig,
     ) -> ChatResponse:
-        config = cast(OllamaConfig, effective_config)
         payload = self.build_request_body(
             request,
             effective_config=effective_config,
             stream=False,
         )
-        endpoint = "/api/generate" if self._use_generate_endpoint(config) else "/api/chat"
+        endpoint = "/api/generate" if self._use_generate_endpoint(effective_config) else "/api/chat"
         raw = await self.post_json(
             endpoint,
             payload,
@@ -109,16 +106,15 @@ class OllamaProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OllamaConfig,
     ) -> AsyncIterator[ChatResponseChunk]:
-        config = cast(OllamaConfig, effective_config)
         payload = self.build_request_body(
             request,
             effective_config=effective_config,
             stream=True,
         )
         headers = self.default_headers(effective_config=effective_config)
-        endpoint = "/api/generate" if self._use_generate_endpoint(config) else "/api/chat"
+        endpoint = "/api/generate" if self._use_generate_endpoint(effective_config) else "/api/chat"
         url = self.make_url(endpoint, effective_config=effective_config)
         if endpoint == "/api/generate":
             try:

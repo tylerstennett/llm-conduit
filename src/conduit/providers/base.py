@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Generic, TypeVar
 
 import httpx
 
@@ -24,7 +24,10 @@ from conduit.models.messages import (
 )
 
 
-class BaseProvider(ABC):
+ConfigT = TypeVar("ConfigT", bound=BaseLLMConfig)
+
+
+class BaseProvider(ABC, Generic[ConfigT]):
     """Base provider abstraction."""
 
     provider_name: str
@@ -32,7 +35,7 @@ class BaseProvider(ABC):
 
     def __init__(
         self,
-        config: BaseLLMConfig,
+        config: ConfigT,
         *,
         timeout: float = 120.0,
         http_client: httpx.AsyncClient | None = None,
@@ -51,7 +54,7 @@ class BaseProvider(ABC):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: ConfigT,
         stream: bool,
     ) -> dict[str, Any]:
         """Build provider-native request payload."""
@@ -61,7 +64,7 @@ class BaseProvider(ABC):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: ConfigT,
     ) -> ChatResponse:
         """Execute non-streaming chat."""
 
@@ -70,14 +73,14 @@ class BaseProvider(ABC):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: ConfigT,
     ) -> AsyncIterator[ChatResponseChunk]:
         """Execute streaming chat."""
 
     def default_headers(
         self,
         *,
-        effective_config: BaseLLMConfig | None = None,
+        effective_config: ConfigT | None = None,
     ) -> dict[str, str]:
         config = effective_config if effective_config is not None else self.config
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -89,7 +92,7 @@ class BaseProvider(ABC):
         self,
         path: str,
         *,
-        effective_config: BaseLLMConfig | None = None,
+        effective_config: ConfigT | None = None,
     ) -> str:
         config = effective_config if effective_config is not None else self.config
         if path.startswith("http://") or path.startswith("https://"):
@@ -102,7 +105,7 @@ class BaseProvider(ABC):
         payload: dict[str, Any],
         *,
         headers: dict[str, str] | None = None,
-        effective_config: BaseLLMConfig | None = None,
+        effective_config: ConfigT | None = None,
     ) -> dict[str, Any]:
         merged_headers = self.default_headers(effective_config=effective_config)
         if headers:

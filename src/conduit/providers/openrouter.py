@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator
 
 import httpx
 
-from conduit.config.base import BaseLLMConfig
 from conduit.config.openrouter import OpenRouterConfig
 from conduit.exceptions import ConfigValidationError, ResponseParseError, StreamError
 from conduit.models.messages import (
@@ -33,32 +32,30 @@ from conduit.providers.utils import drop_nones
 from conduit.utils.streaming import should_complete_tool_calls, should_emit_stream_chunk
 
 
-class OpenRouterProvider(BaseProvider):
+class OpenRouterProvider(BaseProvider[OpenRouterConfig]):
     provider_name = "openrouter"
     supported_runtime_override_keys = frozenset({"openrouter_context_metadata_fields"})
 
     def default_headers(
         self,
         *,
-        effective_config: BaseLLMConfig | None = None,
+        effective_config: OpenRouterConfig | None = None,
     ) -> dict[str, str]:
         headers = super().default_headers(effective_config=effective_config)
         active_config = effective_config if effective_config is not None else self.config
-        config = cast(OpenRouterConfig, active_config)
-        if config.app_url:
-            headers["HTTP-Referer"] = config.app_url
-        if config.app_name:
-            headers["X-Title"] = config.app_name
+        if active_config.app_url:
+            headers["HTTP-Referer"] = active_config.app_url
+        if active_config.app_name:
+            headers["X-Title"] = active_config.app_name
         return headers
 
     def build_request_body(
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OpenRouterConfig,
         stream: bool,
     ) -> dict[str, Any]:
-        config = cast(OpenRouterConfig, effective_config)
         ensure_tool_strict_supported(
             request.tools,
             provider_name=self.provider_name,
@@ -66,39 +63,39 @@ class OpenRouterProvider(BaseProvider):
         )
 
         body: dict[str, Any] = {
-            "model": config.model,
-            "models": config.models,
+            "model": effective_config.model,
+            "models": effective_config.models,
             "messages": to_openai_messages(request.messages),
             "stream": stream,
-            "stream_options": config.stream_options,
-            "reasoning": config.reasoning,
-            "transforms": config.transforms,
-            "include": config.include,
-            "temperature": config.temperature,
-            "max_tokens": config.max_tokens,
-            "max_completion_tokens": config.max_completion_tokens,
-            "top_p": config.top_p,
-            "stop": normalize_stop(config.stop),
-            "seed": config.seed,
-            "frequency_penalty": config.frequency_penalty,
-            "presence_penalty": config.presence_penalty,
-            "n": config.n,
-            "logprobs": config.logprobs,
-            "top_logprobs": config.top_logprobs,
-            "logit_bias": config.logit_bias,
-            "response_format": config.response_format,
+            "stream_options": effective_config.stream_options,
+            "reasoning": effective_config.reasoning,
+            "transforms": effective_config.transforms,
+            "include": effective_config.include,
+            "temperature": effective_config.temperature,
+            "max_tokens": effective_config.max_tokens,
+            "max_completion_tokens": effective_config.max_completion_tokens,
+            "top_p": effective_config.top_p,
+            "stop": normalize_stop(effective_config.stop),
+            "seed": effective_config.seed,
+            "frequency_penalty": effective_config.frequency_penalty,
+            "presence_penalty": effective_config.presence_penalty,
+            "n": effective_config.n,
+            "logprobs": effective_config.logprobs,
+            "top_logprobs": effective_config.top_logprobs,
+            "logit_bias": effective_config.logit_bias,
+            "response_format": effective_config.response_format,
             "provider": (
-                config.provider_prefs.model_dump(exclude_none=True)
-                if config.provider_prefs is not None
+                effective_config.provider_prefs.model_dump(exclude_none=True)
+                if effective_config.provider_prefs is not None
                 else None
             ),
-            "route": config.route,
+            "route": effective_config.route,
             "metadata": self._resolve_metadata(
-                config_metadata=config.metadata,
+                config_metadata=effective_config.metadata,
                 request=request,
             ),
-            "plugins": config.plugins,
-            "user": config.user,
+            "plugins": effective_config.plugins,
+            "user": effective_config.user,
             "tools": tool_definitions_to_openai(
                 request.tools,
                 include_strict=True,
@@ -171,7 +168,7 @@ class OpenRouterProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OpenRouterConfig,
     ) -> ChatResponse:
         payload = self.build_request_body(
             request,
@@ -210,7 +207,7 @@ class OpenRouterProvider(BaseProvider):
         self,
         request: ChatRequest,
         *,
-        effective_config: BaseLLMConfig,
+        effective_config: OpenRouterConfig,
     ) -> AsyncIterator[ChatResponseChunk]:
         payload = self.build_request_body(
             request,
