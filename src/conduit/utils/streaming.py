@@ -20,7 +20,7 @@ def should_complete_tool_calls(
 ) -> bool:
     """Decide whether accumulated tool-call fragments should be completed.
 
-    The decision follows a three-tier priority:
+    The decision follows a four-tier priority:
 
     1. **native_finish_reason present** (OpenRouter dual-reason): complete only
        if the native reason is an explicit tool reason (``tool_calls`` or
