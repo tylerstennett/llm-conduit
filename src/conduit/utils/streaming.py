@@ -18,6 +18,21 @@ def should_complete_tool_calls(
     saw_tool_call_delta: bool,
     native_finish_reason: str | None = None,
 ) -> bool:
+    """Decide whether accumulated tool-call fragments should be completed.
+
+    The decision follows a three-tier priority:
+
+    1. **native_finish_reason present** (OpenRouter dual-reason): complete only
+       if the native reason is an explicit tool reason (``tool_calls`` or
+       ``function_call``) *and* we actually saw tool-call deltas during the
+       stream.
+    2. **finish_reason is ``tool_calls`` / ``function_call``**: always complete
+       — the provider explicitly signalled a tool invocation.
+    3. **finish_reason is ``stop``**: complete only if we saw tool-call deltas.
+       This handles providers that report ``stop`` even when the response
+       contains tool calls.
+    4. **Any other reason** (e.g. ``length``): never complete.
+    """
     normalized_native_reason = _normalize_finish_reason(native_finish_reason)
     if normalized_native_reason is not None:
         if normalized_native_reason in _EXPLICIT_TOOL_CALL_FINISH_REASONS:

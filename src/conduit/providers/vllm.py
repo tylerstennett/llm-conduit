@@ -153,6 +153,11 @@ class VLLMProvider(BaseProvider[VLLMConfig]):
         headers = self.default_headers(effective_config=effective_config)
         url = self.make_url("/chat/completions", effective_config=effective_config)
 
+        # Tool-call completion state machine:
+        # - accumulator: reassembles streamed tool-call fragments into complete calls
+        # - saw_tool_call_delta: tracks whether any tool-call delta appeared in the stream
+        # - allow_terminal_tool_call_flush: gate that disables the terminal flush when
+        #   should_complete_tool_calls() returns False (e.g. finish_reason="length")
         accumulator = ToolCallChunkAccumulator()
         emitted_completed_tool_calls = False
         saw_tool_call_delta = False
