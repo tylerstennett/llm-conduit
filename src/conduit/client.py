@@ -449,33 +449,16 @@ class SyncConduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> Iterator[ChatResponseChunk]:
-        self._ensure_open()
-        self._ensure_not_running_loop()
-
-        async_iter = self._async_client.chat_stream(
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            config_overrides=config_overrides,
-            context=context,
-            runtime_overrides=runtime_overrides,
+        yield from self._iter_async(
+            self._async_client.chat_stream(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                config_overrides=config_overrides,
+                context=context,
+                runtime_overrides=runtime_overrides,
+            )
         )
-        iterator = async_iter.__aiter__()
-
-        try:
-            while True:
-                try:
-                    chunk = self._run(iterator.__anext__())
-                except StopAsyncIteration:
-                    break
-                yield chunk
-        finally:
-            aclose = getattr(iterator, "aclose", None)
-            if callable(aclose):
-                try:
-                    self._run(aclose())
-                except RuntimeError:
-                    pass
 
     def chat_events(
         self,
@@ -486,26 +469,28 @@ class SyncConduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> Iterator[StreamEvent]:
+        yield from self._iter_async(
+            self._async_client.chat_events(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                config_overrides=config_overrides,
+                context=context,
+                runtime_overrides=runtime_overrides,
+            )
+        )
+
+    def _iter_async(self, async_iter: AsyncIterator[T]) -> Iterator[T]:
         self._ensure_open()
         self._ensure_not_running_loop()
-
-        async_iter = self._async_client.chat_events(
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            config_overrides=config_overrides,
-            context=context,
-            runtime_overrides=runtime_overrides,
-        )
         iterator = async_iter.__aiter__()
-
         try:
             while True:
                 try:
-                    chunk = self._run(iterator.__anext__())
+                    item = self._run(iterator.__anext__())
                 except StopAsyncIteration:
                     break
-                yield chunk
+                yield item
         finally:
             aclose = getattr(iterator, "aclose", None)
             if callable(aclose):
