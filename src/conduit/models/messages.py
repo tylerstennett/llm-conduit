@@ -133,7 +133,6 @@ class ChatRequest(BaseModel):
     tools: list[ToolDefinition] | None = None
     tool_choice: str | dict[str, Any] | None = None
     stream: bool = False
-    config_overrides: dict[str, Any] | None = None
     context: RequestContext | None = None
     runtime_overrides: dict[str, Any] | None = None
 

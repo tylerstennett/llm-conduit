@@ -158,7 +158,6 @@ class Conduit:
             tools=tools,
             tool_choice=tool_choice,
             stream=stream,
-            config_overrides=config_overrides,
             context=context,
             runtime_overrides=normalized_runtime_overrides,
         )
@@ -186,7 +185,6 @@ class Conduit:
             tools=tools,
             tool_choice=tool_choice,
             stream=True,
-            config_overrides=config_overrides,
             context=context,
             runtime_overrides=normalized_runtime_overrides,
         )
@@ -212,7 +210,6 @@ class Conduit:
             tools=tools,
             tool_choice=tool_choice,
             stream=True,
-            config_overrides=config_overrides,
             context=context,
             runtime_overrides=normalized_runtime_overrides,
         )
