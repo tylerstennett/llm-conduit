@@ -17,6 +17,16 @@ from conduit.tools.schema import ToolCall, ToolDefinition, parse_tool_arguments
 
 
 def normalize_stop(stop: list[str] | str | None) -> list[str] | str | None:
+    """Normalize a stop sequence value for the OpenAI wire format.
+
+    Empty lists are converted to ``None``.
+
+    Args:
+        stop: Stop sequence(s) or ``None``.
+
+    Returns:
+        The normalised stop value.
+    """
     if stop is None:
         return None
     if isinstance(stop, list):
@@ -27,6 +37,20 @@ def normalize_stop(stop: list[str] | str | None) -> list[str] | str | None:
 def tool_choice_to_openai_payload(
     tool_choice: str | dict[str, Any] | None,
 ) -> str | dict[str, Any] | None:
+    """Convert a tool-choice value to the OpenAI payload format.
+
+    String values are validated against ``{"auto", "none", "required"}``.
+    Dict values are passed through unchanged.
+
+    Args:
+        tool_choice: Tool selection strategy or ``None``.
+
+    Returns:
+        The validated tool-choice value, or ``None``.
+
+    Raises:
+        ConfigValidationError: If the string value is not recognised.
+    """
     if tool_choice is None:
         return None
     if isinstance(tool_choice, str):
@@ -41,6 +65,14 @@ def tool_choice_to_openai_payload(
 
 
 def to_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    """Convert canonical messages to the OpenAI wire format.
+
+    Args:
+        messages: Canonical message list.
+
+    Returns:
+        List of OpenAI-formatted message dicts.
+    """
     output: list[dict[str, Any]] = []
     for message in messages:
         payload: dict[str, Any] = {"role": message.role.value}
@@ -72,6 +104,15 @@ def to_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
 
 
 def to_openai_message_content(message: Message) -> list[dict[str, Any]] | None:
+    """Serialize message content parts to the OpenAI content array format.
+
+    Args:
+        message: A canonical ``Message``.
+
+    Returns:
+        List of content-part dicts, or ``None`` if the message has no
+        content.
+    """
     content_items = _serialize_openai_content_parts(message.content)
     if content_items:
         return content_items
@@ -111,6 +152,16 @@ def tool_definitions_to_openai(
     *,
     include_strict: bool = False,
 ) -> list[dict[str, Any]] | None:
+    """Convert tool definitions to the OpenAI function-calling format.
+
+    Args:
+        tools: Tool definitions, or ``None``.
+        include_strict: Whether to include the ``strict`` field in each
+            tool payload.
+
+    Returns:
+        List of OpenAI tool dicts, or ``None`` when *tools* is empty.
+    """
     if not tools:
         return None
     return [tool.to_openai_tool(include_strict=include_strict) for tool in tools]
@@ -122,6 +173,17 @@ def ensure_tool_strict_supported(
     provider_name: str,
     supports_tool_strict: bool,
 ) -> None:
+    """Raise if any tool sets ``strict=True`` on a provider that doesn't support it.
+
+    Args:
+        tools: Tool definitions to check.
+        provider_name: Name of the provider (used in error messages).
+        supports_tool_strict: Whether the provider supports strict schemas.
+
+    Raises:
+        ConfigValidationError: If strict tools are present on an
+            unsupported provider.
+    """
     if supports_tool_strict or not tools:
         return
 
@@ -137,6 +199,14 @@ def ensure_tool_strict_supported(
 def parse_openai_tool_calls(
     raw_calls: list[dict[str, Any]] | None,
 ) -> list[ToolCall] | None:
+    """Parse completed tool calls from an OpenAI-format response.
+
+    Args:
+        raw_calls: Raw ``tool_calls`` list from the response message.
+
+    Returns:
+        List of ``ToolCall`` objects, or ``None`` if empty.
+    """
     if not raw_calls:
         return None
 
@@ -158,6 +228,14 @@ def parse_openai_tool_calls(
 
 
 def parse_usage(usage: dict[str, Any] | None) -> UsageStats | None:
+    """Parse OpenAI-format usage stats into a ``UsageStats`` instance.
+
+    Args:
+        usage: Raw ``usage`` dict from the response.
+
+    Returns:
+        A ``UsageStats`` instance, or ``None`` when *usage* is falsy.
+    """
     if not usage:
         return None
     prompt_tokens = usage.get("prompt_tokens")
@@ -173,6 +251,16 @@ def parse_usage(usage: dict[str, Any] | None) -> UsageStats | None:
 
 
 def extract_openai_message_content(content: Any) -> str | None:
+    """Extract plain-text content from an OpenAI message payload.
+
+    Handles both string and array-of-parts content formats.
+
+    Args:
+        content: Raw ``content`` value from the response message.
+
+    Returns:
+        Concatenated text content, or ``None``.
+    """
     if isinstance(content, str):
         return content
     if isinstance(content, list):

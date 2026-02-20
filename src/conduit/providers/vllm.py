@@ -33,6 +33,8 @@ from conduit.utils.streaming import should_complete_tool_calls, should_emit_stre
 
 
 class VLLMProvider(BaseProvider[VLLMConfig]):
+    """vLLM provider using the OpenAI-compatible chat completions API."""
+
     provider_name = "vllm"
 
     def build_request_body(

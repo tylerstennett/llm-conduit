@@ -28,7 +28,19 @@ ConfigT = TypeVar("ConfigT", bound=BaseLLMConfig)
 
 
 class BaseProvider(ABC, Generic[ConfigT]):
-    """Base provider abstraction."""
+    """Base provider abstraction.
+
+    Concrete providers implement :meth:`build_request_body`, :meth:`chat`,
+    and :meth:`chat_stream`.  The base class supplies shared HTTP helpers
+    and error mapping.
+
+    Args:
+        config: Provider-specific configuration.
+        timeout: HTTP request timeout in seconds.
+        http_client: Optional pre-configured ``httpx.AsyncClient``.  When
+            ``None`` (the default) a new client is created and owned by this
+            provider instance.
+    """
 
     provider_name: str
     supported_runtime_override_keys: frozenset[str] = frozenset()
@@ -46,6 +58,7 @@ class BaseProvider(ABC, Generic[ConfigT]):
         self.http_client = http_client or httpx.AsyncClient(timeout=timeout)
 
     async def aclose(self) -> None:
+        """Close the HTTP client if it is owned by this provider."""
         if self._client_owned:
             await self.http_client.aclose()
 
@@ -57,7 +70,16 @@ class BaseProvider(ABC, Generic[ConfigT]):
         effective_config: ConfigT,
         stream: bool,
     ) -> dict[str, Any]:
-        """Build provider-native request payload."""
+        """Build the provider-native HTTP request payload.
+
+        Args:
+            request: Canonical chat request.
+            effective_config: Resolved provider config (with overrides applied).
+            stream: Whether to request streaming output.
+
+        Returns:
+            JSON-serialisable request body dict.
+        """
 
     @abstractmethod
     async def chat(
@@ -66,7 +88,15 @@ class BaseProvider(ABC, Generic[ConfigT]):
         *,
         effective_config: ConfigT,
     ) -> ChatResponse:
-        """Execute non-streaming chat."""
+        """Execute a non-streaming chat completion.
+
+        Args:
+            request: Canonical chat request.
+            effective_config: Resolved provider config.
+
+        Returns:
+            The complete chat response.
+        """
 
     @abstractmethod
     async def chat_stream(
@@ -75,13 +105,30 @@ class BaseProvider(ABC, Generic[ConfigT]):
         *,
         effective_config: ConfigT,
     ) -> AsyncIterator[ChatResponseChunk]:
-        """Execute streaming chat."""
+        """Execute a streaming chat completion.
+
+        Args:
+            request: Canonical chat request.
+            effective_config: Resolved provider config.
+
+        Yields:
+            ChatResponseChunk: Individual stream chunks.
+        """
 
     def default_headers(
         self,
         *,
         effective_config: ConfigT | None = None,
     ) -> dict[str, str]:
+        """Build default HTTP headers including authorization.
+
+        Args:
+            effective_config: Config to read ``api_key`` from.  Falls back
+                to ``self.config`` when ``None``.
+
+        Returns:
+            Mutable header dict.
+        """
         config = effective_config if effective_config is not None else self.config
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if config.api_key:
@@ -94,6 +141,19 @@ class BaseProvider(ABC, Generic[ConfigT]):
         *,
         effective_config: ConfigT | None = None,
     ) -> str:
+        """Resolve a relative API path to a full URL.
+
+        Absolute URLs (starting with ``http://`` or ``https://``) are
+        returned unchanged.
+
+        Args:
+            path: Relative or absolute endpoint path.
+            effective_config: Config to read ``base_url`` from.  Falls
+                back to ``self.config`` when ``None``.
+
+        Returns:
+            Fully-qualified URL string.
+        """
         config = effective_config if effective_config is not None else self.config
         if path.startswith("http://") or path.startswith("https://"):
             return path
@@ -107,6 +167,24 @@ class BaseProvider(ABC, Generic[ConfigT]):
         headers: dict[str, str] | None = None,
         effective_config: ConfigT | None = None,
     ) -> dict[str, Any]:
+        """POST *payload* as JSON and return the parsed response dict.
+
+        Raises a ``ProviderError`` subtype on HTTP errors or non-JSON
+        responses.
+
+        Args:
+            path: Relative or absolute endpoint path.
+            payload: JSON-serialisable request body.
+            headers: Extra headers merged on top of :meth:`default_headers`.
+            effective_config: Config for URL/header resolution.
+
+        Returns:
+            Parsed JSON response as a dict.
+
+        Raises:
+            ProviderUnavailableError: On transport-level failures.
+            ProviderError: On HTTP 4xx/5xx responses.
+        """
         merged_headers = self.default_headers(effective_config=effective_config)
         if headers:
             merged_headers.update(headers)
@@ -142,12 +220,35 @@ class BaseProvider(ABC, Generic[ConfigT]):
         return data
 
     async def raise_for_stream_status(self, response: httpx.Response) -> None:
+        """Raise a mapped ``ProviderError`` if the stream response is an error.
+
+        Args:
+            response: The ``httpx.Response`` from a streaming request.
+
+        Raises:
+            ProviderError: On HTTP 4xx/5xx status codes.
+        """
         if response.status_code < 400:
             return
         await response.aread()
         raise self.map_http_error(response)
 
     def map_http_error(self, response: httpx.Response) -> ProviderError:
+        """Map an HTTP error response to a ``ProviderError`` subtype.
+
+        Status codes are mapped as follows: 401/403 to
+        ``AuthenticationError``, 429 to ``RateLimitError``, 404 (with
+        "model" in the message) to ``ModelNotFoundError``, 400 (context
+        length) to ``ContextLengthError``, 5xx to
+        ``ProviderUnavailableError``, and everything else to the base
+        ``ProviderError``.
+
+        Args:
+            response: The failed ``httpx.Response``.
+
+        Returns:
+            An appropriate ``ProviderError`` subclass instance.
+        """
         message = self.extract_error_message(response)
         status_code = response.status_code
         details: Any | None = None
@@ -209,6 +310,18 @@ class BaseProvider(ABC, Generic[ConfigT]):
 
     @staticmethod
     def extract_error_message(response: httpx.Response) -> str:
+        """Extract a human-readable error message from a failed response.
+
+        Attempts to read ``error.message``, ``error`` (string), or
+        ``message`` from the JSON body, falling back to the raw response
+        text.
+
+        Args:
+            response: The failed ``httpx.Response``.
+
+        Returns:
+            Error message string.
+        """
         try:
             payload = response.json()
         except ValueError:

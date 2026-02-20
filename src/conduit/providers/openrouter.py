@@ -33,6 +33,8 @@ from conduit.utils.streaming import should_complete_tool_calls, should_emit_stre
 
 
 class OpenRouterProvider(BaseProvider[OpenRouterConfig]):
+    """OpenRouter provider with support for ``native_finish_reason`` and request metadata."""
+
     provider_name = "openrouter"
     supported_runtime_override_keys = frozenset({"openrouter_context_metadata_fields"})
 

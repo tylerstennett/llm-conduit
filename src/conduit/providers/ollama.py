@@ -36,6 +36,12 @@ from conduit.utils.streaming import should_emit_stream_chunk
 
 
 class OllamaProvider(BaseProvider[OllamaConfig]):
+    """Ollama provider with dual-endpoint dispatch.
+
+    Uses ``/api/chat`` for normal chat and ``/api/generate`` when
+    ``raw=True`` or ``suffix`` is set.
+    """
+
     provider_name = "ollama"
 
     def build_request_body(
@@ -315,6 +321,17 @@ class OllamaProvider(BaseProvider[OllamaConfig]):
 
 
 def build_tool_id_to_name_map(messages: list[Message]) -> dict[str, str]:
+    """Build a mapping from tool-call IDs to tool names.
+
+    Ollama synthesises tool-call IDs as ``ollama_call_{index}``, so this
+    also registers those fallback IDs.
+
+    Args:
+        messages: Conversation history to scan for assistant tool calls.
+
+    Returns:
+        Dict mapping tool-call ID strings to tool names.
+    """
     mapping: dict[str, str] = {}
     for message in messages:
         if message.role is not Role.ASSISTANT or not message.tool_calls:
@@ -331,6 +348,16 @@ def to_ollama_messages(
     *,
     id_to_name: dict[str, str],
 ) -> list[dict[str, Any]]:
+    """Convert canonical messages to the Ollama wire format.
+
+    Args:
+        messages: Canonical message list.
+        id_to_name: Tool-call ID to tool-name mapping (see
+            :func:`build_tool_id_to_name_map`).
+
+    Returns:
+        List of Ollama-formatted message dicts.
+    """
     output: list[dict[str, Any]] = []
 
     for message in messages:
@@ -374,6 +401,15 @@ def to_ollama_messages(
 
 
 def extract_ollama_content(message: Message) -> tuple[str, list[str]]:
+    """Extract text and image URLs from a canonical message.
+
+    Args:
+        message: A canonical ``Message``.
+
+    Returns:
+        A ``(text, images)`` tuple where *text* is the concatenated text
+        parts and *images* is a list of image URL strings.
+    """
     text_parts: list[str] = []
     images: list[str] = []
 
@@ -396,6 +432,21 @@ def extract_ollama_content(message: Message) -> tuple[str, list[str]]:
 
 
 def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
+    """Extract system and user prompts for the ``/api/generate`` endpoint.
+
+    The generate endpoint only supports at most one system message and
+    exactly one user message.
+
+    Args:
+        messages: Canonical message list.
+
+    Returns:
+        A ``(system_prompt, prompt)`` tuple.
+
+    Raises:
+        ConfigValidationError: If the message list is incompatible with
+            the generate endpoint constraints.
+    """
     system_prompt: str | None = None
     prompt: str | None = None
 
@@ -438,6 +489,16 @@ def extract_generate_prompt(messages: list[Message]) -> tuple[str | None, str]:
 
 
 def parse_ollama_tool_calls(raw_tool_calls: Any) -> list[ToolCall] | None:
+    """Parse completed tool calls from an Ollama response.
+
+    Tool-call IDs are synthesised as ``ollama_call_{index}``.
+
+    Args:
+        raw_tool_calls: Raw ``tool_calls`` value from the Ollama response.
+
+    Returns:
+        List of parsed ``ToolCall`` objects, or ``None`` if empty.
+    """
     if not isinstance(raw_tool_calls, list) or not raw_tool_calls:
         return None
 
@@ -463,6 +524,14 @@ def parse_ollama_tool_calls(raw_tool_calls: Any) -> list[ToolCall] | None:
 
 
 def parse_ollama_partial_tool_calls(raw_tool_calls: Any) -> list[PartialToolCall] | None:
+    """Parse streaming tool-call fragments from an Ollama chunk.
+
+    Args:
+        raw_tool_calls: Raw ``tool_calls`` value from a streaming chunk.
+
+    Returns:
+        List of ``PartialToolCall`` objects, or ``None`` if empty.
+    """
     if not isinstance(raw_tool_calls, list) or not raw_tool_calls:
         return None
 
@@ -497,6 +566,14 @@ def parse_ollama_partial_tool_calls(raw_tool_calls: Any) -> list[PartialToolCall
 
 
 def parse_ollama_usage(raw: dict[str, Any]) -> UsageStats | None:
+    """Parse Ollama-style usage stats (``prompt_eval_count`` / ``eval_count``).
+
+    Args:
+        raw: Raw Ollama response or chunk dict.
+
+    Returns:
+        A ``UsageStats`` instance, or ``None`` if no counts are present.
+    """
     prompt_eval_count = raw.get("prompt_eval_count")
     eval_count = raw.get("eval_count")
 

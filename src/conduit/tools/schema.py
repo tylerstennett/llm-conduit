@@ -52,12 +52,22 @@ class ToolDefinition(BaseModel):
         *,
         strict: bool | None = None,
     ) -> ToolDefinition:
-        """Create a ToolDefinition from a Pydantic model class.
+        """Create a ``ToolDefinition`` from a Pydantic model class.
 
-        The model's JSON schema (via ``model_json_schema()``) is used as the
-        ``parameters`` value.  Pydantic v2 always produces a schema with
-        ``"type": "object"`` at the root, so the existing validator is
-        satisfied automatically.
+        The model's JSON schema (via ``model_json_schema()``) is used as
+        the ``parameters`` value.  Pydantic v2 always produces a schema
+        with ``"type": "object"`` at the root, so the existing validator
+        is satisfied automatically.
+
+        Args:
+            name: Tool name.
+            description: Human-readable tool description.
+            model: Pydantic ``BaseModel`` subclass whose schema defines
+                the tool parameters.
+            strict: Optional strict-mode flag for providers that support it.
+
+        Returns:
+            A new ``ToolDefinition`` instance.
         """
         return cls(
             name=name,
@@ -67,6 +77,16 @@ class ToolDefinition(BaseModel):
         )
 
     def to_openai_tool(self, *, include_strict: bool = False) -> dict[str, Any]:
+        """Serialize to the OpenAI function-calling tool format.
+
+        Args:
+            include_strict: When ``True`` and ``self.strict`` is set,
+                include the ``strict`` key in the function payload.
+
+        Returns:
+            A dict matching the OpenAI ``{"type": "function", "function": ...}``
+            schema.
+        """
         function: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
@@ -92,7 +112,22 @@ class ToolCall(BaseModel):
 
 
 def parse_tool_arguments(raw_arguments: str | dict[str, Any] | None) -> dict[str, Any]:
-    """Normalize provider tool argument payloads into dictionaries."""
+    """Normalize provider tool-argument payloads into dicts.
+
+    Accepts JSON strings, dicts, or ``None`` and returns a dict in all
+    cases.
+
+    Args:
+        raw_arguments: Raw arguments from a provider response (string,
+            dict, or ``None``).
+
+    Returns:
+        Parsed arguments dict (empty dict for ``None`` or blank strings).
+
+    Raises:
+        ToolSchemaError: If the string is not valid JSON or does not
+            decode to an object.
+    """
     if raw_arguments is None:
         return {}
     if isinstance(raw_arguments, dict):

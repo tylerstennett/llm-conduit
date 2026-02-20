@@ -21,7 +21,19 @@ class RetryPolicy:
     )
 
     def backoff_for_attempt(self, attempt: int, error: BaseException | None = None) -> float:
-        """Return backoff delay for a retry attempt starting at 1."""
+        """Compute the backoff delay for a given retry attempt.
+
+        Respects ``Retry-After`` on :class:`RateLimitError`; otherwise uses
+        exponential backoff with jitter.
+
+        Args:
+            attempt: 1-based retry attempt number.
+            error: The exception that triggered the retry (used to check
+                for ``Retry-After``).
+
+        Returns:
+            Delay in seconds before the next retry.
+        """
         if isinstance(error, RateLimitError):
             retry_after = error.retry_after
             if (
@@ -35,7 +47,17 @@ class RetryPolicy:
         return base_delay + jitter_component
 
     def should_retry(self, error: BaseException, attempt: int) -> bool:
-        """Return whether an error should be retried for the given attempt."""
+        """Decide whether to retry a failed request.
+
+        Args:
+            error: The exception that was raised.
+            attempt: 1-based attempt number (the attempt that *would* run
+                next, not the one that just failed).
+
+        Returns:
+            ``True`` if the error is retryable and the attempt limit has
+            not been reached.
+        """
         if attempt > self.max_retries:
             return False
         return isinstance(error, self.retry_on)

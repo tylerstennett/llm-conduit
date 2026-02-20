@@ -31,12 +31,23 @@ def should_complete_tool_calls(
        unrecognised (e.g. xAI's ``"completed"``), fall through to the
        standard ``finish_reason`` tiers so that OpenRouter's normalised
        value is still respected.
-    2. **finish_reason is ``tool_calls`` / ``function_call``**: always complete
-       — the provider explicitly signalled a tool invocation.
-    3. **finish_reason is ``stop``**: complete only if we saw tool-call deltas.
-       This handles providers that report ``stop`` even when the response
-       contains tool calls.
+    2. **finish_reason is ``tool_calls`` / ``function_call``**: always
+       complete — the provider explicitly signalled a tool invocation.
+    3. **finish_reason is ``stop``**: complete only if we saw tool-call
+       deltas.  This handles providers that report ``stop`` even when the
+       response contains tool calls.
     4. **Any other reason** (e.g. ``length``): never complete.
+
+    Args:
+        finish_reason: The normalised ``finish_reason`` from the stream.
+        saw_tool_call_delta: Whether any tool-call delta appeared in the
+            stream so far.
+        native_finish_reason: OpenRouter's ``native_finish_reason``, if
+            present.
+
+    Returns:
+        ``True`` if tool-call fragments should be assembled into complete
+        calls.
     """
     normalized_native_reason = _normalize_finish_reason(native_finish_reason)
     if normalized_native_reason is not None:
@@ -58,6 +69,17 @@ def should_complete_tool_calls(
 
 
 def should_emit_stream_chunk(chunk: ChatResponseChunk) -> bool:
+    """Return whether a stream chunk carries any meaningful payload.
+
+    Empty chunks (no content, tool calls, usage, or finish reason) are
+    suppressed to avoid yielding noise to callers.
+
+    Args:
+        chunk: A ``ChatResponseChunk`` to inspect.
+
+    Returns:
+        ``True`` if the chunk contains at least one non-``None`` field.
+    """
     return (
         chunk.content is not None
         or chunk.tool_calls is not None

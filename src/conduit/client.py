@@ -116,7 +116,15 @@ def _provider_spec_for_config(config: BaseLLMConfig) -> ProviderSpec:
 
 
 class Conduit:
-    """Provider-aware asynchronous chat client."""
+    """Provider-aware asynchronous chat client.
+
+    Args:
+        config: Provider-specific configuration (e.g. ``VLLMConfig``).
+        retry_policy: Optional retry policy for transient failures.
+        timeout: HTTP request timeout in seconds.
+        strict_runtime_overrides: When ``True``, raise on unrecognised
+            runtime override keys instead of silently dropping them.
+    """
 
     def __init__(
         self,
@@ -138,6 +146,7 @@ class Conduit:
         await self.aclose()
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
         await self._provider.aclose()
 
     async def chat(
@@ -150,6 +159,26 @@ class Conduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> ChatResponse:
+        """Send a chat completion request and return the full response.
+
+        When *stream* is ``True`` the response is aggregated from a streaming
+        call via ``StreamEventAccumulator``.
+
+        Args:
+            messages: Conversation messages.
+            tools: Tool definitions available to the model.
+            tool_choice: Tool selection strategy (``"auto"``, ``"none"``,
+                ``"required"``, or a specific tool dict).
+            stream: If ``True``, aggregate streaming chunks into a single
+                ``ChatResponse``.
+            config_overrides: Per-request config overrides merged onto the
+                base config.
+            context: Optional run-scoped metadata.
+            runtime_overrides: Provider-specific runtime overrides.
+
+        Returns:
+            The completed chat response.
+        """
         normalized_runtime_overrides = self._normalize_runtime_overrides(
             runtime_overrides
         )
@@ -177,6 +206,19 @@ class Conduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatResponseChunk]:
+        """Stream chat completion chunks as they arrive.
+
+        Args:
+            messages: Conversation messages.
+            tools: Tool definitions available to the model.
+            tool_choice: Tool selection strategy.
+            config_overrides: Per-request config overrides.
+            context: Optional run-scoped metadata.
+            runtime_overrides: Provider-specific runtime overrides.
+
+        Yields:
+            ChatResponseChunk: Individual stream chunks.
+        """
         normalized_runtime_overrides = self._normalize_runtime_overrides(
             runtime_overrides
         )
@@ -202,6 +244,20 @@ class Conduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        """Stream high-level typed events (text deltas, tool calls, etc.).
+
+        Args:
+            messages: Conversation messages.
+            tools: Tool definitions available to the model.
+            tool_choice: Tool selection strategy.
+            config_overrides: Per-request config overrides.
+            context: Optional run-scoped metadata.
+            runtime_overrides: Provider-specific runtime overrides.
+
+        Yields:
+            StreamEvent: Typed events such as ``text_delta``, ``tool_call_delta``,
+                ``tool_call_completed``, ``usage``, ``finish``, or ``error``.
+        """
         normalized_runtime_overrides = self._normalize_runtime_overrides(
             runtime_overrides
         )
@@ -222,6 +278,19 @@ class Conduit:
 
     @staticmethod
     def from_env(provider: str = "openrouter") -> "Conduit":
+        """Create a Conduit client from environment variables.
+
+        Args:
+            provider: Provider name (``"vllm"``, ``"ollama"``, or
+                ``"openrouter"``).
+
+        Returns:
+            A configured ``Conduit`` instance.
+
+        Raises:
+            ConfigValidationError: If required environment variables are
+                missing or the provider name is invalid.
+        """
         normalized = provider.strip().lower()
         spec = _PROVIDER_SPECS_BY_NAME.get(normalized)
         if spec is None:
@@ -392,7 +461,18 @@ class Conduit:
 
 
 class SyncConduit:
-    """Synchronous wrapper around the async Conduit client."""
+    """Synchronous wrapper around the async ``Conduit`` client.
+
+    Bridges async to sync via a dedicated event loop. Must not be used
+    inside an already-running event loop; use ``Conduit`` directly instead.
+
+    Args:
+        config: Provider-specific configuration (e.g. ``VLLMConfig``).
+        retry_policy: Optional retry policy for transient failures.
+        timeout: HTTP request timeout in seconds.
+        strict_runtime_overrides: When ``True``, raise on unrecognised
+            runtime override keys instead of silently dropping them.
+    """
 
     def __init__(
         self,
@@ -427,6 +507,23 @@ class SyncConduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> ChatResponse:
+        """Send a chat completion request and return the full response.
+
+        Synchronous equivalent of :meth:`Conduit.chat`.
+
+        Args:
+            messages: Conversation messages.
+            tools: Tool definitions available to the model.
+            tool_choice: Tool selection strategy.
+            stream: If ``True``, aggregate streaming chunks into a single
+                ``ChatResponse``.
+            config_overrides: Per-request config overrides.
+            context: Optional run-scoped metadata.
+            runtime_overrides: Provider-specific runtime overrides.
+
+        Returns:
+            The completed chat response.
+        """
         self._ensure_open()
         return self._run(
             self._async_client.chat(
@@ -449,6 +546,21 @@ class SyncConduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> Iterator[ChatResponseChunk]:
+        """Stream chat completion chunks as they arrive.
+
+        Synchronous equivalent of :meth:`Conduit.chat_stream`.
+
+        Args:
+            messages: Conversation messages.
+            tools: Tool definitions available to the model.
+            tool_choice: Tool selection strategy.
+            config_overrides: Per-request config overrides.
+            context: Optional run-scoped metadata.
+            runtime_overrides: Provider-specific runtime overrides.
+
+        Yields:
+            ChatResponseChunk: Individual stream chunks.
+        """
         yield from self._iter_async(
             self._async_client.chat_stream(
                 messages=messages,
@@ -469,6 +581,22 @@ class SyncConduit:
         context: RequestContext | None = None,
         runtime_overrides: dict[str, Any] | None = None,
     ) -> Iterator[StreamEvent]:
+        """Stream high-level typed events.
+
+        Synchronous equivalent of :meth:`Conduit.chat_events`.
+
+        Args:
+            messages: Conversation messages.
+            tools: Tool definitions available to the model.
+            tool_choice: Tool selection strategy.
+            config_overrides: Per-request config overrides.
+            context: Optional run-scoped metadata.
+            runtime_overrides: Provider-specific runtime overrides.
+
+        Yields:
+            StreamEvent: Typed events such as ``text_delta``, ``tool_call_delta``,
+                ``tool_call_completed``, ``usage``, ``finish``, or ``error``.
+        """
         yield from self._iter_async(
             self._async_client.chat_events(
                 messages=messages,
@@ -500,6 +628,7 @@ class SyncConduit:
                     pass
 
     def close(self) -> None:
+        """Close the underlying event loop and HTTP client."""
         if self._closed:
             return
 
@@ -534,7 +663,18 @@ class SyncConduit:
 
 
 def deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-    """Deep merge two dictionaries with scalar/list replacement semantics."""
+    """Deep-merge two dictionaries with scalar/list replacement semantics.
+
+    Nested dicts are merged recursively; all other values (including lists)
+    in *updates* replace the corresponding value in *base*.
+
+    Args:
+        base: The base dictionary.
+        updates: Values to merge on top of *base*.
+
+    Returns:
+        A new merged dictionary.
+    """
     merged = dict(base)
     for key, value in updates.items():
         existing = merged.get(key)

@@ -11,7 +11,17 @@ from conduit.tools.schema import ToolCall
 
 
 async def iter_sse_data(response: httpx.Response) -> AsyncIterator[str]:
-    """Yield SSE data payload strings from an HTTP response stream."""
+    """Yield SSE ``data:`` payload strings from an HTTP response stream.
+
+    Comment lines (starting with ``:``) are skipped. Multi-line data
+    fields are joined with newlines.
+
+    Args:
+        response: An open ``httpx.Response`` in streaming mode.
+
+    Yields:
+        str: The payload string for each SSE event.
+    """
     data_lines: list[str] = []
 
     async for line in response.aiter_lines():
@@ -32,7 +42,17 @@ async def iter_sse_data(response: httpx.Response) -> AsyncIterator[str]:
 
 
 async def iter_ndjson(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
-    """Yield parsed JSON objects from an NDJSON response stream."""
+    """Yield parsed JSON objects from an NDJSON response stream.
+
+    Args:
+        response: An open ``httpx.Response`` in streaming mode.
+
+    Yields:
+        dict[str, Any]: Parsed JSON object for each non-empty line.
+
+    Raises:
+        StreamError: On malformed JSON or non-object payloads.
+    """
     async for line in response.aiter_lines():
         if line is None:
             continue
@@ -51,6 +71,14 @@ async def iter_ndjson(response: httpx.Response) -> AsyncIterator[dict[str, Any]]
 def parse_openai_stream_tool_calls(
     raw_tool_calls: list[dict[str, Any]] | None,
 ) -> list[PartialToolCall] | None:
+    """Parse streaming tool-call delta fragments from an OpenAI-format chunk.
+
+    Args:
+        raw_tool_calls: Raw ``tool_calls`` array from a stream delta.
+
+    Returns:
+        List of ``PartialToolCall`` objects, or ``None`` if empty.
+    """
     if not raw_tool_calls:
         return None
 
@@ -87,12 +115,17 @@ def parse_openai_stream_tool_calls(
 
 
 class ToolCallChunkAccumulator:
-    """Assembles streamed OpenAI-style tool call fragments."""
+    """Assembles streamed OpenAI-style tool-call fragments into complete calls."""
 
     def __init__(self) -> None:
         self._items: dict[int, dict[str, Any]] = {}
 
     def ingest(self, partial: PartialToolCall) -> None:
+        """Accumulate a single tool-call delta fragment.
+
+        Args:
+            partial: A streaming tool-call fragment.
+        """
         item = self._items.setdefault(
             partial.index,
             {"id": None, "name": None, "arguments_parts": []},
@@ -105,6 +138,11 @@ class ToolCallChunkAccumulator:
             item["arguments_parts"].append(partial.arguments_fragment)
 
     def completed_calls(self) -> list[ToolCall]:
+        """Return all fully-assembled tool calls accumulated so far.
+
+        Returns:
+            List of ``ToolCall`` objects (may be empty).
+        """
         calls: list[ToolCall] = []
         for index in sorted(self._items):
             entry = self._items[index]

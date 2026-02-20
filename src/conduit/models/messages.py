@@ -170,6 +170,11 @@ class StreamEventAccumulator:
         self._model: str | None = None
 
     def ingest(self, event: StreamEvent) -> None:
+        """Incorporate a single stream event into the accumulator.
+
+        Args:
+            event: A ``StreamEvent`` to process.
+        """
         if event.type == "text_delta" and event.text:
             self._content_parts.append(event.text)
 
@@ -189,6 +194,14 @@ class StreamEventAccumulator:
                 self._model = raw_model
 
     def to_response(self, *, provider: str | None = None) -> ChatResponse:
+        """Build a ``ChatResponse`` from all ingested events.
+
+        Args:
+            provider: Provider name to attach to the response.
+
+        Returns:
+            The aggregated ``ChatResponse``.
+        """
         content = "".join(self._content_parts) if self._content_parts else None
         tool_calls = self._tool_calls if self._tool_calls else None
         return ChatResponse(
