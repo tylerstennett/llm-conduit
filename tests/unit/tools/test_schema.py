@@ -65,8 +65,7 @@ def test_from_pydantic_produces_valid_tool_definition() -> None:
     assert tool.name == "get_weather"
     assert tool.description == "Get weather for a location"
     assert tool.parameters["type"] == "object"
-    assert "location" in tool.parameters["properties"]
-    assert "unit" in tool.parameters["properties"]
+    assert set(tool.parameters["properties"].keys()) == {"location", "unit"}
     assert tool.strict is None
 
 
@@ -77,7 +76,7 @@ def test_from_pydantic_required_fields() -> None:
         model=_WeatherArgs,
     )
 
-    assert "location" in tool.parameters["required"]
+    assert tool.parameters["required"] == ["location"]
 
 
 def test_from_pydantic_passes_strict_through() -> None:

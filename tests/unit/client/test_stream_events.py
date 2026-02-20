@@ -79,11 +79,13 @@ async def test_chat_events_emits_deterministic_order() -> None:
         "finish",
     ]
     assert events[0].text == "Hel"
-    assert events[4].tool_call is not None
-    assert isinstance(events[4].tool_call, ToolCall)
-    assert events[4].tool_call.arguments["location"] == "NYC"
-    assert events[5].usage is not None
-    assert events[5].usage.total_tokens == 2
+    assert events[2].text == "lo"
+    assert events[4].tool_call == ToolCall(
+        id="call_1", name="get_weather", arguments={"location": "NYC"}
+    )
+    assert events[5].usage == UsageStats(
+        prompt_tokens=1, completion_tokens=1, total_tokens=2
+    )
     assert events[6].finish_reason == "tool_calls"
     await client.aclose()
 
@@ -145,10 +147,14 @@ async def test_stream_event_aggregation_reconstructs_chat_response() -> None:
 
     assert response.content == "Hello"
     assert response.tool_calls is not None
-    assert response.tool_calls[0].id == "call_1"
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0] == ToolCall(
+        id="call_1", name="get_weather", arguments={"location": "NYC"}
+    )
     assert response.finish_reason == "stop"
-    assert response.usage is not None
-    assert response.usage.total_tokens == 2
+    assert response.usage == UsageStats(
+        prompt_tokens=1, completion_tokens=1, total_tokens=2
+    )
     assert response.raw_response == {"model": "model-a", "id": "chunk-final"}
     assert response.model == "model-a"
     assert response.provider == "vllm"

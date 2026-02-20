@@ -123,14 +123,12 @@ async def test_unknown_runtime_override_field_raises_when_strict() -> None:
 async def test_unknown_runtime_override_non_string_key_raises_when_strict() -> None:
     client = Conduit(VLLMConfig(model="m"), strict_runtime_overrides=True)
 
-    with pytest.raises(ConfigValidationError) as exc_info:
+    with pytest.raises(ConfigValidationError, match="unknown runtime_overrides keys for vllm: 1"):
         await client.chat(
             messages=[],
             runtime_overrides={1: "x"},
         )
 
-    assert "unknown runtime_overrides keys" in str(exc_info.value)
-    assert "1" in str(exc_info.value)
     await client.aclose()
 
 
@@ -138,16 +136,15 @@ async def test_unknown_runtime_override_non_string_key_raises_when_strict() -> N
 async def test_unknown_runtime_override_mixed_key_types_raises_when_strict() -> None:
     client = Conduit(VLLMConfig(model="m"), strict_runtime_overrides=True)
 
-    with pytest.raises(ConfigValidationError) as exc_info:
+    with pytest.raises(
+        ConfigValidationError,
+        match="unknown runtime_overrides keys for vllm: 2, unknown_key",
+    ):
         await client.chat(
             messages=[],
             runtime_overrides={"unknown_key": 1, 2: "y"},
         )
 
-    message = str(exc_info.value)
-    assert "unknown runtime_overrides keys" in message
-    assert "unknown_key" in message
-    assert "2" in message
     await client.aclose()
 
 
@@ -195,9 +192,9 @@ def test_openrouter_nested_override_merges_provider_object() -> None:
         }
     )
     assert isinstance(updated, OpenRouterConfig)
-    assert updated.provider_prefs is not None
-    assert updated.provider_prefs.order == ["b", "c"]
-    assert updated.provider_prefs.allow_fallbacks is False
+    assert updated.provider_prefs == OpenRouterProviderPrefs(
+        order=["b", "c"], allow_fallbacks=False
+    )
 
 
 def test_vllm_new_fields_accept_overrides() -> None:

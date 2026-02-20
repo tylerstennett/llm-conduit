@@ -92,9 +92,9 @@ def test_ollama_request_places_generation_params_in_options(
         stream=False,
     )
 
-    assert "options" in body
     assert body["options"]["temperature"] == 0.2
     assert body["options"]["num_predict"] == 77
+    assert body["options"]["top_k"] == 10
     assert body["tools"][0]["type"] == "function"
 
 

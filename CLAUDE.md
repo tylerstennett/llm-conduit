@@ -72,6 +72,18 @@ Config & Models       → config/, models/messages.py, tools/schema.py
 - Provider tests call provider methods directly; client tests monkey-patch `client._provider.chat` / `client._provider.chat_stream`
 - Shared fixtures in `tests/unit/conftest.py`: `sample_messages`, `sample_tools`
 
+### Assertion Strictness
+
+Unit tests use deterministic mock data, so assertions must be maximally precise to catch regressions:
+
+- **Exact equality over inequalities**: use `len(x) == 1` not `len(x) >= 1`, `== 2` not `> 0`. Every field with a known expected value should be checked with `==`.
+- **Check all fields, not just one**: when a mock produces `UsageStats(prompt_tokens=10, completion_tokens=4, total_tokens=14)`, assert all three fields — not just `total_tokens`. Use full model equality (e.g. `== UsageStats(...)`, `== ToolCall(...)`) where practical.
+- **Exact counts on collections**: use `len(response.tool_calls) == 1` not just `is not None`. The mock data is deterministic so the count is always known.
+- **Exact error messages**: use `pytest.raises(ExcType, match="full expected message")` instead of partial `"keyword" in str(exc)` checks.
+- **No redundant guards**: don't write `assert x is not None` followed by `assert isinstance(x, Foo)` — the isinstance check alone suffices, or better yet assert the exact value.
+
+Integration tests are an exception — LLM responses are non-deterministic, so structural checks (`is not None`, `len() > 0`, `in`) are appropriate there.
+
 ### Integration Tests
 
 - Run with `pytest -m integration -v`

@@ -53,10 +53,17 @@ async def test_vllm_parses_chat_response(sample_messages, sample_tools) -> None:
         effective_config=provider.config,
     )
 
+    assert response.content is None
+    assert response.finish_reason == "tool_calls"
+    assert response.model == "model-a"
     assert response.tool_calls is not None
+    assert len(response.tool_calls) == 1
     assert response.tool_calls[0].id == "call_1"
-    assert response.tool_calls[0].arguments["location"] == "New York"
+    assert response.tool_calls[0].name == "get_weather"
+    assert response.tool_calls[0].arguments == {"location": "New York"}
     assert response.usage is not None
+    assert response.usage.prompt_tokens == 10
+    assert response.usage.completion_tokens == 4
     assert response.usage.total_tokens == 14
 
     await client.aclose()
@@ -98,7 +105,11 @@ async def test_openrouter_parses_chat_response(sample_messages, sample_tools) ->
 
     assert response.content == "hello"
     assert response.finish_reason == "stop"
+    assert response.tool_calls is None
+    assert response.model == "openai/gpt-4o-mini"
     assert response.usage is not None
+    assert response.usage.prompt_tokens == 3
+    assert response.usage.completion_tokens == 1
     assert response.usage.total_tokens == 4
 
     await client.aclose()
@@ -136,9 +147,13 @@ async def test_ollama_parses_chat_response(sample_messages, sample_tools) -> Non
     )
 
     assert response.tool_calls is not None
+    assert len(response.tool_calls) == 1
     assert response.tool_calls[0].id == "ollama_call_0"
-    assert response.tool_calls[0].arguments["location"] == "New York"
+    assert response.tool_calls[0].name == "get_weather"
+    assert response.tool_calls[0].arguments == {"location": "New York"}
     assert response.usage is not None
+    assert response.usage.prompt_tokens == 7
+    assert response.usage.completion_tokens == 2
     assert response.usage.total_tokens == 9
 
     await client.aclose()
@@ -175,6 +190,8 @@ async def test_ollama_generate_mode_parses_response(sample_messages) -> None:
     assert response.finish_reason == "stop"
     assert response.tool_calls is None
     assert response.usage is not None
+    assert response.usage.prompt_tokens == 4
+    assert response.usage.completion_tokens == 3
     assert response.usage.total_tokens == 7
 
     await client.aclose()

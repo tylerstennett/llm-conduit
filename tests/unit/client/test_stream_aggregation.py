@@ -51,12 +51,16 @@ async def test_chat_stream_true_aggregates_chunks_into_chat_response() -> None:
 
     assert response.content == "Hello"
     assert response.finish_reason == "tool_calls"
-    assert response.usage is not None
-    assert response.usage.total_tokens == 3
+    assert response.usage == UsageStats(
+        prompt_tokens=1, completion_tokens=2, total_tokens=3
+    )
     assert response.model == "final-model"
     assert response.raw_response == {"model": "final-model", "id": "chunk-3"}
     assert response.tool_calls is not None
-    assert response.tool_calls[0].name == "get_weather"
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0] == ToolCall(
+        id="call_1", name="get_weather", arguments={"location": "NYC"}
+    )
     assert response.provider == "vllm"
 
 
