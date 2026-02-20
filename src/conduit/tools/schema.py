@@ -43,6 +43,29 @@ class ToolDefinition(BaseModel):
             raise ValueError("tool parameters root must set type='object'")
         return value
 
+    @classmethod
+    def from_pydantic(
+        cls,
+        name: str,
+        description: str,
+        model: type[BaseModel],
+        *,
+        strict: bool | None = None,
+    ) -> ToolDefinition:
+        """Create a ToolDefinition from a Pydantic model class.
+
+        The model's JSON schema (via ``model_json_schema()``) is used as the
+        ``parameters`` value.  Pydantic v2 always produces a schema with
+        ``"type": "object"`` at the root, so the existing validator is
+        satisfied automatically.
+        """
+        return cls(
+            name=name,
+            description=description,
+            parameters=model.model_json_schema(),
+            strict=strict,
+        )
+
     def to_openai_tool(self, *, include_strict: bool = False) -> dict[str, Any]:
         function: dict[str, Any] = {
             "name": self.name,
