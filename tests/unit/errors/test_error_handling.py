@@ -152,7 +152,10 @@ async def test_ollama_generate_stream_http_error_reads_stream_before_mapping() -
 
     with pytest.raises(RateLimitError, match="too many requests"):
         async for _ in provider.chat_stream(
-            ChatRequest(messages=[Message(role=Role.USER, content="hi")], stream=True),
+            ChatRequest(
+                messages=[Message(role=Role.USER, content=[TextPart(text="hi")])],
+                stream=True,
+            ),
             effective_config=provider.config,
         ):
             pass

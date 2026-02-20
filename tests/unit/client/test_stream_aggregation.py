@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 
 from conduit.client import Conduit
 from conduit.config import VLLMConfig
-from conduit.models.messages import ChatResponseChunk, Message, Role, UsageStats
-from conduit.tools.schema import ToolCall, ToolDefinition
+from conduit.models.messages import (
+    ChatRequest,
+    ChatResponseChunk,
+    Message,
+    Role,
+    TextPart,
+    UsageStats,
+)
+from conduit.tools.schema import ToolCall
 
 
 @pytest.mark.asyncio
@@ -15,12 +22,11 @@ async def test_chat_stream_true_aggregates_chunks_into_chat_response() -> None:
     client = Conduit(VLLMConfig(model="m"))
 
     async def fake_chat_stream(
-        messages: list[Message],
-        tools: list[ToolDefinition] | None = None,
-        tool_choice: str | dict[str, object] | None = None,
-        config_overrides: dict[str, object] | None = None,
+        request: ChatRequest,
+        *,
+        effective_config: object,
     ) -> AsyncIterator[ChatResponseChunk]:
-        del messages, tools, tool_choice, config_overrides
+        del request, effective_config
         yield ChatResponseChunk(content="Hel")
         yield ChatResponseChunk(
             content="lo",
@@ -35,10 +41,10 @@ async def test_chat_stream_true_aggregates_chunks_into_chat_response() -> None:
             raw_chunk={"model": "final-model", "id": "chunk-3"},
         )
 
-    client.chat_stream = fake_chat_stream  # type: ignore[method-assign]
+    client._provider.chat_stream = fake_chat_stream  # type: ignore[method-assign]
 
     response = await client.chat(
-        messages=[Message(role=Role.USER, content="hi")],
+        messages=[Message(role=Role.USER, content=[TextPart(text="hi")])],
         stream=True,
     )
     await client.aclose()
@@ -59,19 +65,18 @@ async def test_chat_stream_true_with_no_chunks_returns_empty_response() -> None:
     client = Conduit(VLLMConfig(model="m"))
 
     async def fake_chat_stream(
-        messages: list[Message],
-        tools: list[ToolDefinition] | None = None,
-        tool_choice: str | dict[str, object] | None = None,
-        config_overrides: dict[str, object] | None = None,
+        request: ChatRequest,
+        *,
+        effective_config: object,
     ) -> AsyncIterator[ChatResponseChunk]:
-        del messages, tools, tool_choice, config_overrides
+        del request, effective_config
         if False:
             yield ChatResponseChunk(content="never")
 
-    client.chat_stream = fake_chat_stream  # type: ignore[method-assign]
+    client._provider.chat_stream = fake_chat_stream  # type: ignore[method-assign]
 
     response = await client.chat(
-        messages=[Message(role=Role.USER, content="hi")],
+        messages=[Message(role=Role.USER, content=[TextPart(text="hi")])],
         stream=True,
     )
     await client.aclose()

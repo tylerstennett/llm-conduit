@@ -3,6 +3,9 @@ from __future__ import annotations
 from conduit.models.messages import ChatResponseChunk
 
 _EXPLICIT_TOOL_CALL_FINISH_REASONS = frozenset({"tool_calls", "function_call"})
+_KNOWN_NON_TOOL_FINISH_REASONS = frozenset({
+    "stop", "length", "max_tokens", "content_filter",
+})
 
 
 def _normalize_finish_reason(finish_reason: str | None) -> str | None:
@@ -22,10 +25,12 @@ def should_complete_tool_calls(
 
     The decision follows a four-tier priority:
 
-    1. **native_finish_reason present** (OpenRouter dual-reason): complete only
-       if the native reason is an explicit tool reason (``tool_calls`` or
-       ``function_call``) *and* we actually saw tool-call deltas during the
-       stream.
+    1. **native_finish_reason is a recognised tool reason** (OpenRouter
+       dual-reason): complete only if we actually saw tool-call deltas
+       during the stream.  When ``native_finish_reason`` is present but
+       unrecognised (e.g. xAI's ``"completed"``), fall through to the
+       standard ``finish_reason`` tiers so that OpenRouter's normalised
+       value is still respected.
     2. **finish_reason is ``tool_calls`` / ``function_call``**: always complete
        — the provider explicitly signalled a tool invocation.
     3. **finish_reason is ``stop``**: complete only if we saw tool-call deltas.
@@ -37,7 +42,10 @@ def should_complete_tool_calls(
     if normalized_native_reason is not None:
         if normalized_native_reason in _EXPLICIT_TOOL_CALL_FINISH_REASONS:
             return saw_tool_call_delta
-        return False
+        if normalized_native_reason in _KNOWN_NON_TOOL_FINISH_REASONS:
+            return False
+        # Unrecognised native reason (e.g. xAI's ``"completed"``) — fall
+        # through to the standard finish_reason logic rather than blocking.
 
     normalized_reason = _normalize_finish_reason(finish_reason)
     if normalized_reason in _EXPLICIT_TOOL_CALL_FINISH_REASONS:
